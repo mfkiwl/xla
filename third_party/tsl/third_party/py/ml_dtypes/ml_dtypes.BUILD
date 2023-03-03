@@ -16,7 +16,7 @@ cc_library(
         ".",
         "ml_dtypes",
     ],
-    deps = ["@xla//third_party/eigen3"],
+    deps = ["@tsl//third_party/eigen3"],
 )
 
 pybind_extension(
@@ -34,8 +34,8 @@ pybind_extension(
     visibility = [":__subpackages__"],
     deps = [
         ":float8",
-        "@xla//third_party/eigen3",
-        "@xla//third_party/py/numpy:headers",
+        "@tsl//third_party/eigen3",
+        "@tsl//third_party/py/numpy:headers",
     ],
 )
 
