@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iostream>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -313,15 +314,6 @@ Status InsertInstructionAndEnsureOperandsInserted(
     HloInstruction* new_instruction, HloInstructionSequence* new_sequence,
     absl::flat_hash_set<HloInstruction*>* inserted_instructions) {
   for (HloInstruction* operand : new_instruction->operands()) {
-    // CopyStart/CopyDone dependencies should always be already inserted; it is
-    // a red flag when they haven't already been inserted.
-    if (operand->opcode() == HloOpcode::kCopyStart ||
-        operand->opcode() == HloOpcode::kCopyDone) {
-      TF_RET_CHECK(inserted_instructions->contains(operand))
-          << "Inserted instruction " << new_instruction->ToString()
-          << " has un-inserted dependency: " << operand->ToString();
-      continue;
-    }
     TF_RETURN_IF_ERROR(EnsureInstructionAndOperandsInserted(
         operand, new_sequence, inserted_instructions));
   }
@@ -423,6 +415,204 @@ StatusOr<std::optional<int64_t>> GetOverriddenPreferredPrefetchTime(
   return static_cast<StatusOr<std::optional<int64_t>>>(std::nullopt);
 }
 
+void PrintAllocationSequence(
+    std::vector<std::unique_ptr<MemorySpaceAssignment::Allocation>>&
+        allocations) {
+  std::cout << "#################################################" << std::endl;
+  std::sort(allocations.begin(), allocations.end(),
+            [](const std::unique_ptr<MemorySpaceAssignment::Allocation>& lhs,
+               const std::unique_ptr<MemorySpaceAssignment::Allocation>& rhs) {
+              return lhs->start_time() != rhs->start_time()
+                         ? lhs->start_time() < rhs->start_time()
+                         : lhs->end_time() < rhs->end_time();
+            });
+  for (auto& allocation : allocations) {
+    std::cout << allocation->ToString() << std::endl;
+  }
+  std::cout << "#################################################" << std::endl;
+}
+
+void PrintInstructionSchedule(const HloLiveRange& hlo_live_range) {
+  std::cout << "#################################################" << std::endl;
+  auto instruction_schedule = hlo_live_range.instruction_schedule();
+  std::map<int64_t, std::vector<const HloInstruction*>> sorted_instructions;
+  for (auto& instruction : instruction_schedule) {
+    sorted_instructions[instruction.second].push_back(instruction.first);
+  }
+  for (auto& instruction : sorted_instructions) {
+    for (auto hlo_instruction : instruction.second) {
+      std::cout << "LogicalTime: " << instruction.first << " "
+                << hlo_instruction->ToString() << std::endl;
+    }
+  }
+  std::cout << "#################################################" << std::endl;
+}
+
+size_t GetEarliestUseIndex(const std::vector<HloUse>& uses,
+                           const HloLiveRange& hlo_live_range) {
+  // TODO(berkin): Are uses guaranteed to be sorted by use time?
+  // If so this method is not required
+  size_t earliest_use_index = 0;
+  for (size_t use_index = 0; use_index < uses.size(); ++use_index) {
+    int64_t use_time =
+        hlo_live_range.instruction_schedule().at(uses[use_index].instruction);
+    int64_t earliest_use_time = hlo_live_range.instruction_schedule().at(
+        uses[earliest_use_index].instruction);
+    if (use_time < earliest_use_time) {
+      earliest_use_index = use_index;
+    }
+  }
+  return earliest_use_index;
+}
+
+void ProcessPrefetchesToAlternateMemory(
+    size_t original_allocations_size,
+    MemorySpaceAssignment::AllocationSequence& allocations,
+    const HloLiveRange& hlo_live_range) {
+  // For every prefetch, update prefetch to serve earliest use just in time
+  // Create a new prefetch from the same parent allocation for all later uses
+  for (size_t allocations_index = 0;
+       allocations_index < original_allocations_size; ++allocations_index) {
+    const std::unique_ptr<MemorySpaceAssignment::Allocation>& allocation =
+        allocations[allocations_index];
+    if (allocation->is_copy_allocation() &&
+        allocation->memory_space() ==
+            MemorySpaceAssignment::MemorySpace::kAlternate) {
+      MemorySpaceAssignment::CopyAllocation* original_prefetch =
+          static_cast<MemorySpaceAssignment::CopyAllocation*>(allocation.get());
+      size_t earliest_use_index =
+          GetEarliestUseIndex(original_prefetch->uses(), hlo_live_range);
+      for (size_t use_index = 0; use_index < original_prefetch->uses().size();
+           ++use_index) {
+        const HloUse& use = original_prefetch->uses()[use_index];
+        int64_t use_time =
+            hlo_live_range.instruction_schedule().at(use.instruction);
+        if (use_index == earliest_use_index) {
+          original_prefetch->set_start_time(use_time - 1);
+          original_prefetch->set_copy_start_schedule_after(use_time - 1);
+          original_prefetch->Extend(use_time);
+          original_prefetch->set_copy_done_schedule_before(use_time);
+          continue;
+        }
+        auto jit_vmem_prefech_allocation =
+            std::make_unique<MemorySpaceAssignment::CopyAllocation>(
+                original_prefetch->prev_allocation(),
+                MemorySpaceAssignment::MemorySpace::kAlternate,
+                original_prefetch->chunk(), use_time - 1, use_time, use_time);
+        jit_vmem_prefech_allocation->set_copy_start_schedule_after(use_time -
+                                                                   1);
+        jit_vmem_prefech_allocation->AddUse(use);
+        allocations.push_back(std::move(jit_vmem_prefech_allocation));
+      }
+      HloUse earliest_use = original_prefetch->uses()[earliest_use_index];
+      original_prefetch->clear_uses();
+      original_prefetch->AddUse(earliest_use);
+    }
+  }
+}
+
+void ProcessBuffersProducedInAlternateMemory(
+    size_t original_allocations_size,
+    MemorySpaceAssignment::AllocationSequence& allocations,
+    const HloLiveRange& hlo_live_range) {
+  // Make all spills to default memory immediate
+  // Create a map from parent allocation -> spill to default memory
+  absl::flat_hash_map<const MemorySpaceAssignment::Allocation*,
+                      MemorySpaceAssignment::CopyAllocation*>
+      spill_to_default_copy_allocation;
+  for (size_t allocations_index = 0;
+       allocations_index < original_allocations_size; ++allocations_index) {
+    const std::unique_ptr<MemorySpaceAssignment::Allocation>& allocation =
+        allocations[allocations_index];
+    if (allocation->is_copy_allocation() &&
+        allocation->memory_space() ==
+            MemorySpaceAssignment::MemorySpace::kDefault) {
+      auto spill_to_default_allocation =
+          static_cast<MemorySpaceAssignment::CopyAllocation*>(allocation.get());
+      const MemorySpaceAssignment::Allocation& previous_allocation =
+          spill_to_default_allocation->prev_allocation();
+      spill_to_default_allocation->set_start_time(
+          previous_allocation.start_time());
+      spill_to_default_allocation->set_copy_start_schedule_after(
+          previous_allocation.start_time());
+      spill_to_default_allocation->Extend(previous_allocation.start_time() + 1);
+      spill_to_default_allocation->set_copy_done_schedule_before(
+          previous_allocation.start_time() + 1);
+      spill_to_default_copy_allocation[&previous_allocation] =
+          spill_to_default_allocation;
+    }
+  }
+
+  // Process all buffers produced in the alternate memory
+  // Make the buffer short lived
+  // Service immediate use if any
+  // If buffer is also used later get or create an immediate spill
+  // For every later use prefetch just in time from the spill allocation
+  for (size_t allocations_index = 0;
+       allocations_index < original_allocations_size; ++allocations_index) {
+    const std::unique_ptr<MemorySpaceAssignment::Allocation>& allocation =
+        allocations[allocations_index];
+    if (!allocation->is_copy_allocation() &&
+        allocation->memory_space() ==
+            MemorySpaceAssignment::MemorySpace::kAlternate) {
+      // Allocation is produced in alternate memory
+      std::optional<HloUse> immediate_use = std::nullopt;
+      for (const HloUse& use : allocation->uses()) {
+        int64_t use_time =
+            hlo_live_range.instruction_schedule().at(use.instruction);
+        if (allocation->start_time() + 1 == use_time) {
+          immediate_use = use;
+          continue;
+        }
+        if (!spill_to_default_copy_allocation.contains(allocation.get())) {
+          auto spill_to_default_copy_allocation_unique_ptr =
+              std::make_unique<MemorySpaceAssignment::CopyAllocation>(
+                  *allocation, MemorySpaceAssignment::MemorySpace::kDefault,
+                  std::nullopt, allocation->start_time(),
+                  allocation->start_time() + 1, allocation->start_time() + 1);
+          spill_to_default_copy_allocation_unique_ptr
+              ->set_copy_start_schedule_after(allocation->start_time());
+          spill_to_default_copy_allocation[allocation.get()] =
+              spill_to_default_copy_allocation_unique_ptr.get();
+          allocations.push_back(
+              std::move(spill_to_default_copy_allocation_unique_ptr));
+        }
+        const MemorySpaceAssignment::CopyAllocation*
+            spill_to_default_allocation =
+                spill_to_default_copy_allocation[allocation.get()];
+        auto jit_vmem_prefech_allocation =
+            std::make_unique<MemorySpaceAssignment::CopyAllocation>(
+                *spill_to_default_allocation,
+                MemorySpaceAssignment::MemorySpace::kAlternate,
+                allocation->chunk(), use_time - 1, use_time, use_time);
+        jit_vmem_prefech_allocation->set_copy_start_schedule_after(use_time -
+                                                                   1);
+        jit_vmem_prefech_allocation->AddUse(use);
+        allocations.push_back(std::move(jit_vmem_prefech_allocation));
+      }
+      allocation->clear_uses();
+      allocation->Extend(allocation->start_time() + 1);
+      if (immediate_use.has_value()) {
+        allocation->AddUse(immediate_use.value());
+      }
+    }
+  }
+}
+
+void TransformAllocationSequenceToSpill(
+    MemorySpaceAssignment::AllocationSequence& allocations,
+    const HloLiveRange& hlo_live_range) {
+  // Debug statemenets
+  PrintInstructionSchedule(hlo_live_range);
+  PrintAllocationSequence(allocations);
+  size_t original_allocations_size = allocations.size();
+  ProcessPrefetchesToAlternateMemory(original_allocations_size, allocations,
+                                     hlo_live_range);
+  PrintAllocationSequence(allocations);
+  ProcessBuffersProducedInAlternateMemory(original_allocations_size,
+                                          allocations, hlo_live_range);
+  PrintAllocationSequence(allocations);
+}
 }  // namespace
 
 /*static*/ StatusOr<std::unique_ptr<MemorySpaceAssignmentCostAnalysis>>
@@ -6849,7 +7039,7 @@ MemorySpaceAssignment::RunMemorySpaceAssignment(
     VLOG(1) << "Estimated elapsed time (sec): " << estimated_time;
   }
 
-  TF_RETURN_IF_ERROR(Process());
+  TF_RETURN_IF_ERROR(Process(hlo_live_range));
   ScheduleAsynchronousCopies();
   TF_RETURN_IF_ERROR(SimplifyGraph());
   TF_RETURN_IF_ERROR(FixSchedule());
@@ -7541,13 +7731,16 @@ void MemorySpaceAssignment::MirroredAllocation::MarkNeeded(
   original_allocation_.MarkNeeded(needed_allocations);
 }
 
-Status MemorySpaceAssignment::Process() {
+Status MemorySpaceAssignment::Process(const HloLiveRange& hlo_live_range) {
   VLOG(1) << "Processing assigned buffers...";
   // Since some parent allocations may not be needed (e.g. when they don't have
   // any uses and if there is no other (non-parent) allocation that depends on
   // it, before we process the allocations, mark all allocations that are
   // needed.
   absl::flat_hash_set<const Allocation*> needed_allocations;
+  if (options_.always_spill_to_default_memory) {
+    TransformAllocationSequenceToSpill(allocations_, hlo_live_range);
+  }
   for (auto& allocation : allocations_) {
     allocation->MarkIfNeeded(needed_allocations);
   }
@@ -8006,7 +8199,6 @@ void MemorySpaceAssignment::ScheduleAsynchronousCopies() {
           async_copy_step->set_start_phase_schedule_after_time(
               ++copy_start_schedule_after);
         }
-
         start_phase = async_copy_step->start_phase();
         schedule_after_[start_phase->schedule_after_time].push_back(
             start_phase->instruction);
@@ -8052,8 +8244,13 @@ Status MemorySpaceAssignment::FixSchedule() {
           if (new_instruction->parent() == computation) {
             VLOG(4) << "before " << instruction_index << ": "
                     << new_instruction->name();
-            TF_RETURN_IF_ERROR(InsertInstructionAndEnsureOperandsInserted(
-                new_instruction, &new_sequence, &inserted_instructions));
+            if (options_.always_spill_to_default_memory) {
+              TF_RETURN_IF_ERROR(EnsureInstructionAndOperandsInserted(
+                  new_instruction, &new_sequence, &inserted_instructions));
+            } else {
+              TF_RETURN_IF_ERROR(InsertInstructionAndEnsureOperandsInserted(
+                  new_instruction, &new_sequence, &inserted_instructions));
+            }
           }
         }
       }
@@ -8082,8 +8279,13 @@ Status MemorySpaceAssignment::FixSchedule() {
           if (new_instruction->parent() == computation) {
             VLOG(4) << "after " << instruction_index << ": "
                     << new_instruction->name();
-            TF_RETURN_IF_ERROR(InsertInstructionAndEnsureOperandsInserted(
-                new_instruction, &new_sequence, &inserted_instructions));
+            if (options_.always_spill_to_default_memory) {
+              TF_RETURN_IF_ERROR(EnsureInstructionAndOperandsInserted(
+                  new_instruction, &new_sequence, &inserted_instructions));
+            } else {
+              TF_RETURN_IF_ERROR(InsertInstructionAndEnsureOperandsInserted(
+                  new_instruction, &new_sequence, &inserted_instructions));
+            }
           }
         }
       }

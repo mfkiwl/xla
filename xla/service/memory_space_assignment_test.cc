@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -42,6 +43,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/heap_simulator.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -647,6 +649,97 @@ TEST_P(MemorySpaceAssignmentTest, NegateChain) {
   EXPECT_THAT(sequence.instructions()[1], op::Parameter(1));
   EXPECT_THAT(sequence.instructions()[2], op::CopyStart());
   EXPECT_THAT(sequence.instructions()[10], op::CopyDone());
+}
+
+TEST_P(MemorySpaceAssignmentTest, AlwaysSpillJitPrefetchTest) {
+  // The negate chain is long enough for asynchronous copy to be inserted
+  // between p1 and add.
+  // Always spill makes the prefetch just in time.
+  HloComputation::Builder builder(TestName());
+  Shape shape = ShapeUtil::MakeShape(F32, {2, 3});
+  HloInstruction* p0 =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  HloInstruction* p1 =
+      builder.AddInstruction(HloInstruction::CreateParameter(1, shape, "p1"));
+  HloInstruction* negate0 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, p0));
+  HloInstruction* negate1 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, negate0));
+  HloInstruction* negate2 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, negate1));
+  HloInstruction* negate3 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, negate2));
+  HloInstruction* negate4 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, negate3));
+  HloInstruction* negate5 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, negate4));
+  HloInstruction* negate6 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, negate5));
+  HloInstruction* add = builder.AddInstruction(
+      HloInstruction::CreateBinary(shape, HloOpcode::kAdd, negate6, p1));
+
+  auto module = CreateNewVerifiedModule();
+  HloComputation* computation = module->AddEntryComputation(builder.Build());
+
+  HloSchedule schedule(module.get());
+  schedule.set_sequence(computation, {p0, p1, negate0, negate1, negate2,
+                                      negate3, negate4, negate5, negate6, add});
+  TF_CHECK_OK(module->set_schedule(schedule));
+
+  Options options = DefaultMemorySpaceOptions();
+  options.always_spill_to_default_memory = true;
+  AssignMemorySpace(module.get(), options);
+
+  const HloInstructionSequence& sequence =
+      module->schedule().sequence(computation);
+  for (int i = 0; i < sequence.instructions().size(); ++i) {
+    std::cout << sequence.instructions()[i]->name() << std::endl;
+  }
+}
+
+TEST_P(MemorySpaceAssignmentTest, AlwaysSpillPrefetchForSecondUseTest) {
+  // The negate chain is long enough for asynchronous copy to be inserted
+  // between p1 and add.
+  HloComputation::Builder builder(TestName());
+  Shape shape = ShapeUtil::MakeShape(F32, {2, 3});
+  HloInstruction* p0 =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  HloInstruction* p1 =
+      builder.AddInstruction(HloInstruction::CreateParameter(1, shape, "p1"));
+  HloInstruction* negate0 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, p0));
+  HloInstruction* negate1 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, negate0));
+  HloInstruction* negate2 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, negate1));
+  HloInstruction* negate3 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, negate2));
+  HloInstruction* negate4 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, negate3));
+  HloInstruction* negate5 = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, negate4));
+  HloInstruction* negate6 = builder.AddInstruction(
+      HloInstruction::CreateBinary(shape, HloOpcode::kAdd, negate0, negate5));
+  HloInstruction* add = builder.AddInstruction(
+      HloInstruction::CreateBinary(shape, HloOpcode::kAdd, negate6, p1));
+
+  auto module = CreateNewVerifiedModule();
+  HloComputation* computation = module->AddEntryComputation(builder.Build());
+
+  HloSchedule schedule(module.get());
+  schedule.set_sequence(computation, {p0, p1, negate0, negate1, negate2,
+                                      negate3, negate4, negate5, negate6, add});
+  TF_CHECK_OK(module->set_schedule(schedule));
+
+  Options options = DefaultMemorySpaceOptions();
+  options.always_spill_to_default_memory = true;
+  AssignMemorySpace(module.get(), options);
+
+  const HloInstructionSequence& sequence =
+      module->schedule().sequence(computation);
+  for (int i = 0; i < sequence.instructions().size(); ++i) {
+    std::cout << sequence.instructions()[i]->name() << std::endl;
+  }
 }
 
 TEST_P(MemorySpaceAssignmentTest, FilterUpdatePreferredPrefetchTest) {

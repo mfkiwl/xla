@@ -663,6 +663,7 @@ class MemorySpaceAssignment {
     virtual int64_t earliest_available_time() const { return start_time_; }
 
     const std::vector<HloUse>& uses() const { return uses_; }
+    void clear_uses() { uses_.clear(); }
     MemorySpace memory_space() const { return memory_space_; }
     // Returns the associated chunk that may be a nullopt if the allocation is
     // in the default memory space.
@@ -767,6 +768,8 @@ class MemorySpaceAssignment {
 
     bool operator==(const CopyAllocation& other) const;
     std::string ToString() const override;
+
+    const Allocation& prev_allocation() { return prev_allocation_; }
 
    private:
     const Allocation& prev_allocation_;
@@ -1211,7 +1214,7 @@ class MemorySpaceAssignment {
  private:
   // Process calls Process methods of the allocations after the allocations have
   // been finalized.
-  Status Process();
+  Status Process(const HloLiveRange& hlo_live_range);
 
   // Process() might have altered the computation graph by inserting kTuple and
   // kGetTupleElement instructions. SimplifyGraph performs a simple DCE and
@@ -1517,6 +1520,8 @@ struct Options {
       -> xla::StatusOr<MemorySpaceAssignment::SliceProposalCollection> {
     return UnimplementedStrCat("Generation of SliceProposals unimplemented");
   };
+
+  bool always_spill_to_default_memory = false;
 };
 
 // A struct representing an asynchronous copy with its logical start and end
