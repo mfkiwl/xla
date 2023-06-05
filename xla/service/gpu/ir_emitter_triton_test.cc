@@ -618,6 +618,31 @@ ENTRY entry {
           .status());
 }
 
+TEST_F(TritonGemmTest, FuseTransposeWithoutMixedTypes) {
+  const std::string kHloText = R"(
+HloModule m
+
+ENTRY e {
+  tmp_0 = f16[150,32,60]{2,1,0} parameter(1)
+  tmp_1 = f16[75,2,26,60]{3,2,1,0} parameter(0)
+  tmp_2 = f16[75,2,60,26]{3,2,1,0} transpose(tmp_1), dimensions={0,1,3,2}
+  tmp_3 = f16[150,60,26]{2,1,0} reshape(tmp_2)
+  ROOT tmp_4 = f16[150,32,26]{2,1,0} dot(tmp_0, tmp_3),
+    lhs_batch_dims={0}, lhs_contracting_dims={2},
+    rhs_batch_dims={0}, rhs_contracting_dims={1}
+})";
+
+  MatchOptimizedHlo(kHloText, R"(
+; CHECK: ENTRY
+; CHECK-NEXT: parameter
+; CHECK-NEXT: parameter
+; CHECK-NEXT: ROOT
+; CHECK-SAME: kCustom
+)");
+
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
 class TritonGemmTestAny : public TritonGemmTest {
  public:
   DebugOptions GetDebugOptionsForTest() override {
@@ -933,6 +958,66 @@ ENTRY e {
                      .WithFusionKind(HloInstruction::FusionKind::kCustom)));
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/2e-2, /*arel=*/2e-2}));
+}
+
+TEST_F(TritonGemmTest, SplitLHSOutputTransposeAloneIsNotFused) {
+  if (!GetCudaComputeCapability().IsAtLeast(
+          se::CudaComputeCapability::AMPERE)) {
+    GTEST_SKIP() << "No BF16 before Ampere.";
+  }
+
+  const std::string kHloText = R"(
+HloModule m
+
+ENTRY e {
+  p0 = s8[18,15000] parameter(0)
+  p0c = bf16[18,15000] convert(p0)
+  p1 = bf16[42,18] parameter(1)
+  d = bf16[15000,42] dot(p0c, p1),
+    lhs_contracting_dims={0}, rhs_contracting_dims={1}
+  r1 = bf16[5,200,15,42] reshape(d)
+  ROOT t1 = bf16[5,42,200,15] transpose(r1), dimensions={0,3,1,2}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(kHloText));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Transpose(
+                  m::Fusion(m::Parameter(), m::Parameter())
+                      .WithFusionKind(HloInstruction::FusionKind::kCustom))));
+
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
+TEST_F(TritonGemmTest, SplitLHSInputOutputIsFused) {
+  if (!GetCudaComputeCapability().IsAtLeast(
+          se::CudaComputeCapability::AMPERE)) {
+    GTEST_SKIP() << "No BF16 before Ampere.";
+  }
+
+  const std::string kHloText = R"(
+HloModule m
+
+ENTRY e {
+  p0 = s8[5,18,20,150] parameter(0)
+  p0c = bf16[5,18,20,150] convert(p0)
+  t0 = bf16[18,5,20,150] transpose(p0c), dimensions={1,0,2,3}
+  r0 = bf16[18,15000] reshape(t0)
+  p1 = bf16[42,18] parameter(1)
+  d = bf16[15000,42] dot(r0, p1),
+    lhs_contracting_dims={0}, rhs_contracting_dims={1}
+  r1 = bf16[5,20,150,42] reshape(d)
+  ROOT t1 = bf16[5,42,20,150] transpose(r1), dimensions={0,3,1,2}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(kHloText));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Parameter(), m::Parameter())
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)));
+
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonGemmTest, Naming) {
