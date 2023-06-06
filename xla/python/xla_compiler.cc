@@ -946,6 +946,12 @@ void BuildXlaCompilerSubmodule(py::module& m) {
       .def_property("replicate_on_last_tile_dim",
                     &xla::OpSharding::replicate_on_last_tile_dim,
                     &xla::OpSharding::set_replicate_on_last_tile_dim)
+      .def_property("is_shard_group", &xla::OpSharding::is_shard_group,
+                    &xla::OpSharding::set_is_shard_group)
+      .def_property("shard_group_id", &xla::OpSharding::shard_group_id,
+                    &xla::OpSharding::set_shard_group_id)
+      .def_property("group_shard_type", &xla::OpSharding::group_shard_type,
+                    &xla::OpSharding::set_group_shard_type)
       .def("__repr__", &xla::OpSharding::DebugString)
       .def("ParseFromString",
            [](OpSharding& sharding, const std::string& s) {

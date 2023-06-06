@@ -24,6 +24,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <ostream>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -188,6 +189,16 @@ class HloSharding {
                           [](const HloSharding& s) { return s.IsManual(); });
   }
 
+  bool IsShardGroup() const {
+    if (!IsTuple()) {
+      return shard_group_.shard_group_id != -1 &&
+             (shard_group_.shard_main || shard_group_.shard_like ||
+              shard_group_.shard_as);
+    }
+    return absl::c_all_of(
+        tuple_elements_, [](const HloSharding& s) { return s.IsShardGroup(); });
+  }
+
   // Returns whether the sharding represents manual subgroup sharding.
   bool IsManualSubgroup() const {
     if (!IsTuple()) {
@@ -312,7 +323,8 @@ class HloSharding {
            tile_assignment_ == other.tile_assignment_ &&
            tuple_elements_ == other.tuple_elements_ &&
            replicate_on_last_tile_dim_ == other.replicate_on_last_tile_dim_ &&
-           subgroup_types_ == other.subgroup_types_;
+           subgroup_types_ == other.subgroup_types_ &&
+           shard_group_ == other.shard_group_;
   }
   bool operator!=(const HloSharding& other) const { return !(*this == other); }
 
@@ -323,7 +335,8 @@ class HloSharding {
     }
     return H::combine(std::move(h), sharding.replicated_, sharding.manual_,
                       sharding.tile_assignment_.array(),
-                      sharding.replicate_on_last_tile_dim_);
+                      sharding.replicate_on_last_tile_dim_,
+                      sharding.shard_group_.ToString());
   }
 
   // Gets the tile assignment tensor.
@@ -399,6 +412,78 @@ class HloSharding {
 
   // Returns the number of tuple_elements_ entries to fit the shape.
   static int64_t RequiredLeaves(const Shape& shape);
+
+  struct ShardGroup {
+    bool operator==(const ShardGroup& rhs) const {
+      return shard_group_id == rhs.shard_group_id &&
+             shard_main == rhs.shard_main && shard_as == rhs.shard_as &&
+             shard_like == rhs.shard_like;
+    }
+    std::string ToString() const {
+      std::ostringstream result;
+      if (shard_main) {
+        result << "shard " << shard_group_id;
+      } else if (shard_as) {
+        result << "shard_as " << shard_group_id;
+      } else {
+        result << "shard_like " << shard_group_id;
+      }
+      return result.str();
+    }
+
+    int64_t shard_group_id = 0;
+    // This field is used to store the unique id of the primary instruction to
+    // which this instruction is to be sharded like.
+    // For example, {shard_like 12345} will make sure that this instruction to
+    // to be sharded like some other instruction whose unique id is 12345.
+    bool shard_main;
+    bool shard_as;
+    bool shard_like;
+  };
+  static ShardGroup NotShardGroup() {
+    return ShardGroup{.shard_group_id = -1,
+                      .shard_main = false,
+                      .shard_as = false,
+                      .shard_like = false};
+  }
+  static ShardGroup ShardGroupMain(int64_t shard_group_id) {
+    return ShardGroup{.shard_group_id = shard_group_id,
+                      .shard_main = true,
+                      .shard_as = false,
+                      .shard_like = false};
+  }
+  static ShardGroup ShardAs(int64_t shard_group_id) {
+    return ShardGroup{.shard_group_id = shard_group_id,
+                      .shard_main = true,
+                      .shard_as = false,
+                      .shard_like = false};
+  }
+  static ShardGroup ShardLike(int64_t shard_group_id) {
+    return ShardGroup{.shard_group_id = shard_group_id,
+                      .shard_main = true,
+                      .shard_as = false,
+                      .shard_like = false};
+  }
+
+  HloSharding& SetShardGroup(const ShardGroup& shard_group) {
+    shard_group_ = shard_group;
+    return *this;
+  }
+
+  HloSharding& SetShardGroupFromProto(const OpSharding& proto) {
+    ShardGroup shard_group = NotShardGroup();
+    if (proto.is_shard_group()) {
+      if (proto.group_shard_type() == OpSharding::GROUP_MAIN) {
+        shard_group = ShardGroupMain(proto.shard_group_id());
+      } else if (proto.group_shard_type() == OpSharding::AS) {
+        shard_group = ShardAs(proto.shard_group_id());
+      } else {
+        shard_group = ShardLike(proto.shard_group_id());
+      }
+    }
+    SetShardGroup(shard_group);
+    return *this;
+  }
 
  private:
   explicit HloSharding(bool manual, bool replicated,
@@ -504,6 +589,7 @@ class HloSharding {
   // shape rank, and the added last dimension represents the subgroups of
   // replications, i.e., elements in slice [..., :] will be replicated.
   bool replicate_on_last_tile_dim_;
+  ShardGroup shard_group_ = NotShardGroup();
 };
 
 std::ostream& operator<<(std::ostream& out, const HloSharding& sharding);

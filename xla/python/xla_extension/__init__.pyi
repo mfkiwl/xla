@@ -289,6 +289,11 @@ class OpSharding_Type(enum.IntEnum):
   TUPLE: int
   OTHER: int
   MANUAL: int
+  
+class OpSharding_GroupShardType(enum.IntEnum):
+  GROUP_MAIN: int
+  AS: int
+  LIKE: int
 
 class OpSharding:
   Type: typing.Type[OpSharding_Type]
@@ -300,6 +305,9 @@ class OpSharding:
   iota_reshape_dims: Sequence[int]
   iota_transpose_perm: Sequence[int]
   tuple_shardings: Sequence[OpSharding]
+  is_shard_group: bool
+  shard_group_id: int
+  group_shard_type: typing.Type[OpSharding_GroupShardType]
   def ParseFromString(self, s: bytes) -> None: ...
   def SerializeToString(self) -> bytes: ...
   def clone(self) -> OpSharding: ...
