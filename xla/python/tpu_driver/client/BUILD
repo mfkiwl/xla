@@ -1,3 +1,4 @@
+load("//xla:strict.default.bzl", "py_strict_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "tsl_pybind_extension")
 
@@ -74,7 +75,7 @@ tsl_pybind_extension(
     ],
 )
 
-py_library(
+py_strict_library(
     name = "py_tpu_client",
     srcs = [
         "tpu_client.py",
@@ -83,7 +84,6 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         ":tpu_client_extension",
-        "//third_party/py/numpy",
         "//xla/python:xla_client",
         "//xla/python:xla_extension",
     ],
