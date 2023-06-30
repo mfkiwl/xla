@@ -468,6 +468,16 @@ std::pair<std::vector<int64_t>, std::vector<int64_t>> ConstructFromDotMaps(
   return {map_ab_a, map_ab_b};
 }
 
+// Estimates the number of flops a reduce requires
+int64_t GetReduceFlops(const HloInstruction* reduce) {
+  int64_t reduce_product = 1;
+  for (auto dim : reduce->dimensions()) {
+    reduce_product *= reduce->operand(0)->shape().dimensions(dim);
+  }
+  // Reduce along a dimension of size n requires n-1 additions
+  return ShapeUtil::ElementsIn(reduce->shape()) * (reduce_product - 1);
+}
+
 }  // namespace
 
 void AlgebraicSimplifierVisitor::ResetState(HloComputation* computation) {
@@ -3024,7 +3034,7 @@ Status AlgebraicSimplifierVisitor::HandleDot(HloInstruction* dot) {
           // This is a contraction dimension between a and c
           ac_dnums.add_lhs_contracting_dimensions(map_ab_a[ab_index]);
           ac_dnums.add_rhs_contracting_dimensions(c_index);
-        } else {
+        } else if (map_ab_a[ab_index] == -1) {
           // This is a contraction dimension between b and c
           bc_dnums.add_lhs_contracting_dimensions(map_ab_b[ab_index]);
           bc_dnums.add_rhs_contracting_dimensions(c_index);
@@ -5361,6 +5371,138 @@ Status AlgebraicSimplifierVisitor::HandleSlice(HloInstruction* slice) {
     return ReplaceInstruction(slice, new_broadcast);
   }
 
+  // Try to reorder slice of dot to the operand it comes from
+  if (options_.use_associative_reordering() &&
+      slice->operand(0)->opcode() == HloOpcode::kDot) {
+    // Unpack the dot operands
+    HloInstruction* dot = slice->mutable_operand(0);
+    HloInstruction* lhs = dot->mutable_operand(0);
+    HloInstruction* rhs = dot->mutable_operand(1);
+    DotDimensionNumbers dnums = dot->dot_dimension_numbers();
+
+    VLOG(1) << "DEBUGGING SLICE REORDER";
+    VLOG(1) << "";
+    VLOG(1) << "dot: " << dot->ToString();
+    VLOG(1) << "slice: " << slice->ToString();
+    VLOG(1) << "";
+
+    // Construct map from lhs and rhs dimensions to dot dimensions
+    std::vector<int64_t> map_lhs_dot, map_rhs_dot;
+    std::tie(map_lhs_dot, map_rhs_dot) =
+        ConstructToDotMaps(dnums, lhs->shape(), rhs->shape());
+
+    // We use these booleans to keep track of where to add slice instructions
+    bool slice_lhs = false;
+    bool slice_rhs = false;
+
+    // Here we build up the slice dimensions for lhs
+    DimensionVector lhs_start_indices, lhs_limit_indices, lhs_strides;
+    for (int64_t lhs_index = 0; lhs_index < lhs->shape().rank(); lhs_index++) {
+      int64_t start = 0;
+      int64_t limit = lhs->shape().dimensions(lhs_index);
+      int64_t stride = 1;
+      if (map_lhs_dot[lhs_index] != -1) {
+        // If it is not a contracting dimension, we slice it according to the
+        // slicing of the corresponding dimension in dot
+        int64_t dot_index = map_lhs_dot[lhs_index];
+        start = slice->slice_starts(dot_index);
+        limit = slice->slice_limits(dot_index);
+        stride = slice->slice_strides(dot_index);
+      }
+      lhs_start_indices.push_back(start);
+      lhs_limit_indices.push_back(limit);
+      lhs_strides.push_back(stride);
+      // Record if any slicing occurs here
+      if (start != 0 || limit < lhs->shape().dimensions(lhs_index)) {
+        slice_lhs = true;
+      }
+    }
+
+    // Here we do the same for rhs
+    DimensionVector rhs_start_indices, rhs_limit_indices, rhs_strides;
+    for (int64_t rhs_index = 0; rhs_index < rhs->shape().rank(); rhs_index++) {
+      int64_t start = 0;
+      int64_t limit = rhs->shape().dimensions(rhs_index);
+      int64_t stride = 1;
+      if (map_rhs_dot[rhs_index] != -1) {
+        // If it is not a contracting dimension, we slice it according to the
+        // slicing of the corresponding dimension in dot
+        int64_t dot_index = map_rhs_dot[rhs_index];
+        start = slice->slice_starts(dot_index);
+        limit = slice->slice_limits(dot_index);
+        stride = slice->slice_strides(dot_index);
+      }
+      rhs_start_indices.push_back(start);
+      rhs_limit_indices.push_back(limit);
+      rhs_strides.push_back(stride);
+      // Record if any slicing occurs here
+      if (start != 0 || limit < rhs->shape().dimensions(rhs_index)) {
+        slice_rhs = true;
+      }
+    }
+
+    // Create Hlo for new slices
+    HloInstruction* new_lhs = lhs;
+    HloInstruction* new_rhs = rhs;
+    if (slice_lhs) {
+      TF_ASSIGN_OR_RETURN(
+          new_lhs,
+          MakeSliceHlo(lhs, lhs_start_indices, lhs_limit_indices, lhs_strides));
+    }
+    if (slice_rhs) {
+      TF_ASSIGN_OR_RETURN(
+          new_rhs,
+          MakeSliceHlo(rhs, rhs_start_indices, rhs_limit_indices, rhs_strides));
+    }
+
+    VLOG(1) << "new_lhs: " << new_lhs->ToString();
+    VLOG(1) << "new_rhs: " << new_rhs->ToString();
+
+    // Finally, create Hlo for the new dot and reorder
+    HloInstruction* new_dot;
+    TF_ASSIGN_OR_RETURN(
+        new_dot, MakeDotHlo(new_lhs, new_rhs, dnums, dot->precision_config(),
+                            dot->shape().element_type()));
+    VLOG(1) << "new_dot: " << new_dot->ToString();
+    VLOG(1) << "";
+
+    VLOG(1) << "old flops: "
+            << HloCostAnalysis::GetDotFlops(lhs->shape(), dot->shape(), dnums);
+    VLOG(1) << "new flops: "
+            << HloCostAnalysis::GetDotFlops(new_lhs->shape(), new_dot->shape(),
+                                            dnums);
+    VLOG(1) << "";
+
+    // We should only do this reorder if both new_lhs and new_rhs have free
+    // dimensions. Otherwise, it will conflict with an existing optimization
+    // that converts dot to mul(broadcast)
+    int64_t new_lhs_true_rank = 0;
+    for (int64_t i = 0; i < new_lhs->shape().rank(); i++) {
+      if (new_lhs->shape().dimensions(i) > 1) {
+        new_lhs_true_rank++;
+      }
+    }
+    int64_t new_rhs_true_rank = 0;
+    for (int64_t i = 0; i < new_rhs->shape().rank(); i++) {
+      if (new_rhs->shape().dimensions(i) > 1) {
+        new_rhs_true_rank++;
+      }
+    }
+    bool dont_reorder = (dnums.lhs_batch_dimensions_size() +
+                             dnums.lhs_contracting_dimensions_size() ==
+                         new_lhs_true_rank) ||
+                        (dnums.rhs_contracting_dimensions_size() +
+                             dnums.rhs_batch_dimensions_size() ==
+                         new_rhs_true_rank);
+    // bool dont_reorder = false;
+
+    if (!dont_reorder) {
+      VLOG(1) << "Reordering slice into dot operands";
+      VLOG(1) << "---------------------------";
+      return ReplaceInstruction(slice, new_dot);
+    }
+  }
+
   // Try to simplify concat -> slice to an operand of concat.
   if (slice->operand(0)->opcode() == HloOpcode::kConcatenate &&
       IsUnstridedSlice(slice)) {
@@ -6066,6 +6208,117 @@ Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
 
   if (options_.is_layout_sensitive()) {
     return OkStatus();
+  }
+
+  // Try to reorder reduce(dot(A, B)) to dot(A, reduce(B))
+  if (options_.use_associative_reordering()) {
+    HloInstruction *a, *b;
+    // Reordering does not seem possible if the dot has batch dimensions
+    if (Match(arg, m::Dot(m::Op(&a), m::Op(&b))) &&
+        IsScalarConstantZero(init_value) &&
+        arg->dot_dimension_numbers().lhs_batch_dimensions().empty()) {
+      VLOG(1) << "DEBUGGING REDUCE REORDER";
+      VLOG(1) << "";
+      VLOG(1) << "dot: " << arg->ToString();
+      VLOG(1) << "reduce: " << reduce->ToString();
+      VLOG(1) << "";
+
+      // Create maps for converting AB dimensions to A and B
+      DotDimensionNumbers ab_dnums = arg->dot_dimension_numbers();
+      std::vector<int64_t> map_ab_a, map_ab_b;
+      std::tie(map_ab_a, map_ab_b) =
+          ConstructFromDotMaps(arg, a->shape(), b->shape());
+
+      // Create new reduce dimensions using the maps
+      std::vector<int64_t> reduce_a_dims, reduce_b_dims;
+      for (auto dim : reduce->dimensions()) {
+        if (map_ab_a[dim] != -1) {
+          reduce_a_dims.push_back(map_ab_a[dim]);
+        }
+        if (map_ab_b[dim] != -1) {
+          reduce_b_dims.push_back(map_ab_b[dim]);
+        }
+      }
+
+      // Create Hlo for reducing a and b
+      TF_ASSIGN_OR_RETURN(
+          HloInstruction * reduce_a,
+          MakeReduceHlo(a, init_value, reduce_a_dims, function));
+      TF_ASSIGN_OR_RETURN(
+          HloInstruction * reduce_b,
+          MakeReduceHlo(b, init_value, reduce_b_dims, function));
+
+      VLOG(1) << "reduce_a: " << reduce_a->ToString();
+      VLOG(1) << "reduce_b: " << reduce_b->ToString();
+
+      // Construct maps from reduce_a and reduce_b to a and b
+      std::vector<int64_t> map_reduce_a_a(reduce_a->shape().rank(), -1),
+          map_reduce_b_b(reduce_b->shape().rank(), -1);
+      int64_t reduce_a_index = 0;
+      for (int64_t a_index = 0; a_index < a->shape().rank(); a_index++) {
+        if (!absl::c_linear_search(reduce_a_dims, a_index)) {
+          map_reduce_a_a[reduce_a_index] = a_index;
+          reduce_a_index++;
+        }
+      }
+      int64_t reduce_b_index = 0;
+      for (int64_t b_index = 0; b_index < b->shape().rank(); b_index++) {
+        if (!absl::c_linear_search(reduce_b_dims, b_index)) {
+          map_reduce_b_b[reduce_b_index] = b_index;
+          reduce_b_index++;
+        }
+      }
+
+      // Construct dot dimension numbers for new dot
+      auto a_contracting_dims = ab_dnums.lhs_contracting_dimensions();
+      auto b_contracting_dims = ab_dnums.rhs_contracting_dimensions();
+      DotDimensionNumbers new_dot_dnums;
+      for (int64_t reduce_a_index = 0;
+           reduce_a_index < reduce_a->shape().rank(); reduce_a_index++) {
+        if (map_reduce_a_a[reduce_a_index] != -1) {
+          int64_t a_index = map_reduce_a_a[reduce_a_index];
+          if (absl::c_linear_search(a_contracting_dims, a_index)) {
+            new_dot_dnums.add_lhs_contracting_dimensions(reduce_a_index);
+          }
+        }
+      }
+      for (int64_t reduce_b_index = 0;
+           reduce_b_index < reduce_b->shape().rank(); reduce_b_index++) {
+        if (map_reduce_b_b[reduce_b_index] != -1) {
+          int64_t b_index = map_reduce_b_b[reduce_b_index];
+          if (absl::c_linear_search(b_contracting_dims, b_index)) {
+            new_dot_dnums.add_rhs_contracting_dimensions(reduce_b_index);
+          }
+        }
+      }
+
+      // Create Hlo for new dot
+      TF_ASSIGN_OR_RETURN(
+          HloInstruction * new_dot,
+          MakeDotHlo(reduce_a, reduce_b, new_dot_dnums, arg->precision_config(),
+                     reduce->shape().element_type()));
+      VLOG(1) << "new_dot: " << new_dot->ToString();
+      VLOG(1) << "";
+
+      // Compute the number of flops for both old and new operations
+      const int64_t old_flops =
+          HloCostAnalysis::GetDotFlops(a->shape(), arg->shape(), ab_dnums) +
+          GetReduceFlops(reduce);
+      const int64_t new_flops =
+          GetReduceFlops(reduce_a) + GetReduceFlops(reduce_b) +
+          HloCostAnalysis::GetDotFlops(reduce_a->shape(), new_dot->shape(),
+                                       new_dot_dnums);
+      VLOG(1) << "old_flops: " << old_flops;
+      VLOG(1) << "new_flops: " << new_flops;
+      VLOG(1) << "";
+
+      // Only reorder if it would result in sufficiently fewer flops
+      if (old_flops / new_flops > options_.associative_reordering_threshold()) {
+        VLOG(1) << "Reordering reduce into dot operands";
+        VLOG(1) << "---------------------------";
+        return ReplaceInstruction(reduce, new_dot);
+      }
+    }
   }
 
   // TODO(b/131122694): Most of those optimizations below can be done for
