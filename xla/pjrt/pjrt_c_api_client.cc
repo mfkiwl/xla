@@ -1441,6 +1441,7 @@ xla::Layout FromC(const PJRT_XLA_Layout* c_layout) {
   }
   return xla::Layout(
       minor_to_major, dim_level_types, dim_unique, dim_ordered, tiles,
+      c_layout->multiple_padded_to_in_elements,
       static_cast<xla::PrimitiveType>(c_layout->index_primitive_type),
       static_cast<xla::PrimitiveType>(c_layout->pointer_primitive_type),
       c_layout->element_size_in_bits, c_layout->memory_space,

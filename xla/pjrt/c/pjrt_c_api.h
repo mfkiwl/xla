@@ -1376,6 +1376,7 @@ typedef struct PJRT_XLA_Layout {
   PJRT_IntList dim_unique;
   PJRT_IntList dim_ordered;
   PJRT_XLA_TileList tiles;
+  int64_t multiple_padded_to_in_elements;
   int index_primitive_type;
   int pointer_primitive_type;
   int64_t element_size_in_bits;

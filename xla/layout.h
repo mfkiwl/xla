@@ -107,6 +107,7 @@ class Layout {
                   absl::Span<const bool> dim_unique,
                   absl::Span<const bool> dim_ordered,
                   absl::Span<const Tile> tiles,
+                  int64_t multiple_padded_to_in_elements = 1,
                   PrimitiveType index_primitive_type = PRIMITIVE_TYPE_INVALID,
                   PrimitiveType element_primitive_type = PRIMITIVE_TYPE_INVALID,
                   int64_t element_size_in_bits = 0, int64_t memory_space = 0,
@@ -303,6 +304,14 @@ class Layout {
     return *this;
   }
 
+  int64_t multiple_padded_to_in_elements() const {
+    return multiple_padded_to_in_elements_;
+  }
+  Layout& set_multiple_padded_to_in_elements(int64_t value) {
+    multiple_padded_to_in_elements_ = value;
+    return *this;
+  }
+
   PrimitiveType index_primitive_type() const { return index_primitive_type_; }
   Layout& set_index_primitive_type(PrimitiveType value) {
     index_primitive_type_ = value;
@@ -352,7 +361,8 @@ class Layout {
   friend H AbslHashValue(H h, const Layout& l) {
     return H::combine(std::move(h), l.minor_to_major_, l.tiles_,
                       l.element_size_in_bits_, l.index_primitive_type_,
-                      l.pointer_primitive_type_, l.memory_space_);
+                      l.pointer_primitive_type_, l.memory_space_,
+                      l.multiple_padded_to_in_elements_);
   }
 
  private:
@@ -379,6 +389,15 @@ class Layout {
 
   // The tiles used in tiling-based layout.
   TileVector tiles_;
+
+  // The shape is padded at the end to multiple of, in terms of number of
+  // elements. This is useful when tiling does not bring the shape to certain
+  // desired granules. Tiling effectively pads/reshapes/transposes the shape
+  // to another shape. This field pads the total number of elements of that
+  // new shape to a multiple of certain number of elements. This is useful such
+  // as we want a layout which does not tile the data but still requires it to
+  // be padded to certain number of elements.
+  int64_t multiple_padded_to_in_elements_ = 1;
 
   // The primitive type to use for sparse array indices and pointers.  Each of
   // these must either be INVALID, or an unsigned integer type.

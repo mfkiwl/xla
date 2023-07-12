@@ -1227,6 +1227,8 @@ void ToC(const xla::Layout& layout, PJRT_XLA_Layout* c_layout) {
   c_layout->dynamic_shape_metadata_prefix_bytes =
       layout.dynamic_shape_metadata_prefix_bytes();
   CreateVector(layout.tiles(), &c_layout->tiles);
+  c_layout->multiple_padded_to_in_elements =
+      layout.multiple_padded_to_in_elements();
 }
 
 }  // namespace

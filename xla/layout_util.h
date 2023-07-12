@@ -42,6 +42,7 @@ class LayoutUtil {
       absl::Span<const bool> dim_unique = {},
       absl::Span<const bool> dim_ordered = {},
       absl::Span<const Tile> tiles = {},
+      int64_t multiple_padded_to_in_elements = 0,
       PrimitiveType index_primitive_type = PRIMITIVE_TYPE_INVALID,
       PrimitiveType pointer_primitive_type = PRIMITIVE_TYPE_INVALID,
       int64_t element_size_in_bits = 0, int64_t memory_space = 0,

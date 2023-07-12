@@ -71,6 +71,7 @@ Layout::Layout(absl::Span<const int64_t> minor_to_major,
                absl::Span<const DimLevelType> dim_level_types,
                absl::Span<const bool> dim_unique,
                absl::Span<const bool> dim_ordered, absl::Span<const Tile> tiles,
+               int64_t multiple_padded_to_in_elements,
                PrimitiveType index_primitive_type,
                PrimitiveType pointer_primitive_type,
                int64_t element_size_in_bits, int64_t memory_space,
@@ -247,6 +248,13 @@ void Layout::Print(Printer* printer) const {
     for (const Tile& tile : tiles()) {
       tile.Print(printer);
     }
+  }
+
+  if (multiple_padded_to_in_elements() != 1) {
+    print_colon();
+    printer->Append("L(");
+    printer->Append(multiple_padded_to_in_elements());
+    printer->Append(")");
   }
 
   if (index_primitive_type() != PRIMITIVE_TYPE_INVALID) {

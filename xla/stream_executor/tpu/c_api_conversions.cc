@@ -312,6 +312,8 @@ void ToC(const xla::Layout& layout, XLA_Layout* c_layout) {
   c_layout->dynamic_shape_metadata_prefix_bytes =
       layout.dynamic_shape_metadata_prefix_bytes();
   CreateVector(layout.tiles(), &c_layout->tiles);
+  c_layout->multiple_padded_to_in_elements =
+      layout.multiple_padded_to_in_elements();
 }
 
 xla::Layout FromC(const XLA_Layout* c_layout) {
@@ -339,6 +341,7 @@ xla::Layout FromC(const XLA_Layout* c_layout) {
   }
   return xla::Layout(
       minor_to_major, dim_level_types, dim_unique, dim_ordered, tiles,
+      c_layout->multiple_padded_to_in_elements,
       static_cast<xla::PrimitiveType>(c_layout->index_primitive_type),
       static_cast<xla::PrimitiveType>(c_layout->pointer_primitive_type),
       c_layout->element_size_in_bits, c_layout->memory_space,
