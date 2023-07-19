@@ -19,10 +19,8 @@ limitations under the License.
 #include <cstdint>
 #include <cstring>
 #include <functional>
-#include <iostream>
 #include <memory>
 #include <optional>
-#include <ostream>
 #include <string>
 #include <utility>
 #include <variant>
@@ -1533,6 +1531,48 @@ PJRT_Error* PJRT_Buffer_UnsafePointer(PJRT_Buffer_UnsafePointer_Args* args) {
   PJRT_ASSIGN_OR_RETURN(args->buffer_pointer,
                         args->buffer->client->client->UnsafeBufferPointer(
                             args->buffer->buffer.get()));
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Buffer_IncreaseReference(
+    PJRT_Buffer_IncreaseReference_Args* args) {
+  PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
+      "PJRT_Buffer_IncreaseReference_Args",
+      PJRT_Buffer_IncreaseReference_Args_STRUCT_SIZE, args->struct_size));
+  PJRT_ASSIGN_OR_RETURN(
+      std::unique_ptr<xla::PjRtBuffer::ExternalReference> external_reference,
+      args->buffer->buffer->AcquireExternalReference());
+  args->buffer->external_references.push_back(std::move(external_reference));
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Buffer_DecreaseReference(
+    PJRT_Buffer_DecreaseReference_Args* args) {
+  PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
+      "PJRT_Buffer_DecreaseReference_Args",
+      PJRT_Buffer_DecreaseReference_Args_STRUCT_SIZE, args->struct_size));
+
+  if (!args->buffer->external_references.empty()) {
+    args->buffer->external_references.pop_back();
+    return nullptr;
+  }
+  xla::Status xla_status = xla::NotFound(
+      "Attempting to decrease reference on a buffer with zero reference "
+      "count.");
+  PJRT_Error* error = new PJRT_Error{std::move(xla_status)};
+  return error;
+}
+
+PJRT_Error* PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
+    PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args* args) {
+  PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
+      "PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args",
+      PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args_STRUCT_SIZE,
+      args->struct_size));
+  PJRT_ASSIGN_OR_RETURN(
+      std::unique_ptr<xla::PjRtBuffer::ExternalReference> external_reference,
+      args->buffer->buffer->AcquireExternalReference());
+  args->data_ptr = external_reference->OpaqueDeviceMemoryDataPointer();
   return nullptr;
 }
 

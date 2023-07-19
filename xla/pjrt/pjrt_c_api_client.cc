@@ -1746,6 +1746,27 @@ PjRtFuture<Status> PjRtCApiBuffer::GetReadyFuture() {
   return PjRtFuture<Status>{*readiness_promise_};
 }
 
+PjRtCApiExternalReference::PjRtCApiExternalReference(PjRtCApiClient* client,
+                                                     PjRtCApiBuffer* buffer)
+    : client_(client), buffer_(buffer) {
+  PJRT_Buffer_IncreaseReference_Args increase_reference_args;
+  increase_reference_args.buffer = buffer_->c_buffer();
+  client->pjrt_c_api()->PJRT_Buffer_IncreaseReference(&increase_reference_args);
+
+  PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args
+      opaque_device_memory_data_pointer_args;
+  opaque_device_memory_data_pointer_args.buffer = buffer_->c_buffer();
+  client->pjrt_c_api()->PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
+      &opaque_device_memory_data_pointer_args);
+  data_ptr_ = opaque_device_memory_data_pointer_args.data_ptr;
+}
+
+PjRtCApiExternalReference::~PjRtCApiExternalReference() {
+  PJRT_Buffer_DecreaseReference_Args args;
+  args.buffer = buffer_->c_buffer();
+  client_->pjrt_c_api()->PJRT_Buffer_DecreaseReference(&args);
+}
+
 // ------------------------------ Device Topology ------------------------------
 
 PjRtCApiTopologyDescription::PjRtCApiTopologyDescription(

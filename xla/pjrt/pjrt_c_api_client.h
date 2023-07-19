@@ -406,6 +406,19 @@ class PjRtCApiBuffer : public PjRtBuffer {
   mutable absl::Mutex mu_;
 };
 
+class PjRtCApiExternalReference : public PjRtBuffer::ExternalReference {
+ public:
+  PjRtCApiExternalReference(PjRtCApiClient* client, PjRtCApiBuffer* buffer);
+  ~PjRtCApiExternalReference() override;
+
+ private:
+  PjRtCApiClient* client_;
+  PjRtCApiBuffer* buffer_;
+};
+
+StatusOr<std::unique_ptr<PjRtBuffer::ExternalReference>>
+AcquireExternalReference();
+
 class PjRtCApiExecutable : public PjRtExecutable {
  public:
   PjRtCApiExecutable(const PJRT_Api* c_api, PJRT_Executable* executable);

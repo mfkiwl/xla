@@ -881,6 +881,53 @@ TEST_F(PjrtCApiBufferTest, ToHostBufferNoHostLayout) {
       xla::LiteralUtil::CreateR1<float>(float_data), *literal));
 }
 
+TEST_F(PjrtCApiBufferTest, IncreaseAndDecreaseReference) {
+  PJRT_Buffer_IncreaseReference_Args increase_reference_args;
+  increase_reference_args.struct_size =
+      PJRT_Buffer_IncreaseReference_Args_STRUCT_SIZE;
+  increase_reference_args.priv = nullptr;
+  increase_reference_args.buffer = buffer_.get();
+  PJRT_Error* increase_reference_error =
+      api_->PJRT_Buffer_IncreaseReference(&increase_reference_args);
+  EXPECT_EQ(increase_reference_error, nullptr);
+
+  PJRT_Buffer_DecreaseReference_Args decrease_reference_args;
+  decrease_reference_args.struct_size =
+      PJRT_Buffer_DecreaseReference_Args_STRUCT_SIZE;
+  decrease_reference_args.priv = nullptr;
+  decrease_reference_args.buffer = buffer_.get();
+  PJRT_Error* decrease_reference_error =
+      api_->PJRT_Buffer_DecreaseReference(&decrease_reference_args);
+  EXPECT_EQ(decrease_reference_error, nullptr);
+}
+
+TEST_F(PjrtCApiBufferTest, DecreaseReferenceReturnsError) {
+  PJRT_Buffer_DecreaseReference_Args decrease_reference_args;
+  decrease_reference_args.struct_size =
+      PJRT_Buffer_DecreaseReference_Args_STRUCT_SIZE;
+  decrease_reference_args.priv = nullptr;
+  decrease_reference_args.buffer = buffer_.get();
+  PJRT_Error* decrease_reference_error =
+      api_->PJRT_Buffer_DecreaseReference(&decrease_reference_args);
+  EXPECT_NE(decrease_reference_error, nullptr);
+  // Cleanup Error
+  PJRT_Error_Destroy_Args error_destroy_args;
+  error_destroy_args.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+  error_destroy_args.priv = nullptr;
+  error_destroy_args.error = decrease_reference_error;
+  api_->PJRT_Error_Destroy(&error_destroy_args);
+}
+
+TEST_F(PjrtCApiBufferTest, OpaqueDeviceMemoryDataPointer) {
+  PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args args;
+  args.struct_size = PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.buffer = buffer_.get();
+  PJRT_Error* error = api_->PJRT_Buffer_OpaqueDeviceMemoryDataPointer(&args);
+  EXPECT_EQ(error, nullptr);
+  EXPECT_NE(args.data_ptr, nullptr);
+}
+
 // --------------------------------- Helpers -----------------------------------
 
 class PjrtCommonCApiHelpersTest : public PjrtCApiTest {};

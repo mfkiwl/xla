@@ -16,11 +16,9 @@ limitations under the License.
 #ifndef XLA_PJRT_C_PJRT_C_API_WRAPPER_IMPL_H_
 #define XLA_PJRT_C_PJRT_C_API_WRAPPER_IMPL_H_
 
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "xla/pjrt/c/pjrt_c_api.h"
@@ -115,6 +113,9 @@ struct PJRT_Buffer {
   std::optional<std::vector<size_t>> dynamic_dim_indices;
   // Used to synchronize concurrent setting of cached values.
   absl::Mutex mu;
+  // Manages, holds, and takes ownership of external references.
+  std::vector<std::unique_ptr<xla::PjRtBuffer::ExternalReference>>
+      external_references;
 };
 
 struct PJRT_Event {
@@ -257,6 +258,12 @@ PJRT_Error* PJRT_Buffer_ToHostBuffer(PJRT_Buffer_ToHostBuffer_Args* args);
 PJRT_Error* PJRT_Buffer_IsOnCpu(PJRT_Buffer_IsOnCpu_Args* args);
 PJRT_Error* PJRT_Buffer_ReadyEvent(PJRT_Buffer_ReadyEvent_Args* args);
 PJRT_Error* PJRT_Buffer_UnsafePointer(PJRT_Buffer_UnsafePointer_Args* args);
+PJRT_Error* PJRT_Buffer_IncreaseReference(
+    PJRT_Buffer_IncreaseReference_Args* args);
+PJRT_Error* PJRT_Buffer_DecreaseReference(
+    PJRT_Buffer_DecreaseReference_Args* args);
+PJRT_Error* PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
+    PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args* args);
 
 PJRT_Error* PJRT_CopyToDeviceStream_Destroy(
     PJRT_CopyToDeviceStream_Destroy_Args* args);
@@ -454,6 +461,10 @@ constexpr PJRT_Api CreatePjrtApi(
       /*PJRT_Buffer_IsOnCpu=*/pjrt::PJRT_Buffer_IsOnCpu,
       /*PJRT_Buffer_ReadyEvent=*/pjrt::PJRT_Buffer_ReadyEvent,
       /*PJRT_Buffer_UnsafePointer=*/pjrt::PJRT_Buffer_UnsafePointer,
+      /*PJRT_Buffer_IncreaseReference=*/pjrt::PJRT_Buffer_IncreaseReference,
+      /*PJRT_Buffer_DecreaseReference=*/pjrt::PJRT_Buffer_DecreaseReference,
+      /*PJRT_Buffer_OpaqueDeviceMemoryDataPointer=*/
+      pjrt::PJRT_Buffer_OpaqueDeviceMemoryDataPointer,
 
       /*PJRT_CopyToDeviceStream_Destroy=*/
       pjrt::PJRT_CopyToDeviceStream_Destroy,
