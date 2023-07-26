@@ -441,12 +441,12 @@ build:rbe_linux --host_linkopt=-lm
 
 # Use the GPU toolchain until the CPU one is ready.
 # https://github.com/bazelbuild/bazel/issues/13623
-build:rbe_cpu_linux_base --host_crosstool_top="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_cuda//crosstool:toolchain"
-build:rbe_cpu_linux_base --crosstool_top="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_cuda//crosstool:toolchain"
-build:rbe_cpu_linux_base --extra_toolchains="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_cuda//crosstool:toolchain-linux-x86_64"
-build:rbe_cpu_linux_base --extra_execution_platforms="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_platform//:platform"
-build:rbe_cpu_linux_base --host_platform="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_platform//:platform"
-build:rbe_cpu_linux_base --platforms="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_platform//:platform"
+build:rbe_cpu_linux_base --host_crosstool_top="@sigbuild-r2.14-clang_config_cuda//crosstool:toolchain"
+build:rbe_cpu_linux_base --crosstool_top="@sigbuild-r2.14-clang_config_cuda//crosstool:toolchain"
+build:rbe_cpu_linux_base --extra_toolchains="@sigbuild-r2.14-clang_config_cuda//crosstool:toolchain-linux-x86_64"
+build:rbe_cpu_linux_base --extra_execution_platforms="@sigbuild-r2.14-clang_config_platform//:platform"
+build:rbe_cpu_linux_base --host_platform="@sigbuild-r2.14-clang_config_platform//:platform"
+build:rbe_cpu_linux_base --platforms="@sigbuild-r2.14-clang_config_platform//:platform"
 
 build:rbe_cpu_linux --config=rbe_linux
 build:rbe_cpu_linux --config=rbe_cpu_linux_base
@@ -463,23 +463,17 @@ build:rbe_linux_cuda_base --repo_env=REMOTE_GPU_TESTING=1
 test:rbe_linux_cuda_base --test_env=LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:/usr/local/cuda-11.1/lib64"
 
 build:rbe_linux_cuda11.2_nvcc_base --config=rbe_linux_cuda_base
-build:rbe_linux_cuda11.2_nvcc_base --host_crosstool_top="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_cuda//crosstool:toolchain"
-build:rbe_linux_cuda11.2_nvcc_base --crosstool_top="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_cuda//crosstool:toolchain"
-build:rbe_linux_cuda11.2_nvcc_base --extra_toolchains="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_cuda//crosstool:toolchain-linux-x86_64"
-build:rbe_linux_cuda11.2_nvcc_base --extra_execution_platforms="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_platform//:platform"
-build:rbe_linux_cuda11.2_nvcc_base --host_platform="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_platform//:platform"
-build:rbe_linux_cuda11.2_nvcc_base --platforms="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_platform//:platform"
-build:rbe_linux_cuda11.2_nvcc_base --repo_env=TF_CUDA_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_cuda"
-build:rbe_linux_cuda11.2_nvcc_base --repo_env=TF_TENSORRT_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_tensorrt"
-build:rbe_linux_cuda11.2_nvcc_base --repo_env=TF_NCCL_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_nccl"
-build:rbe_linux_cuda11.2_nvcc_py3.7 --config=rbe_linux_cuda11.2_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_python3.7"
-build:rbe_linux_cuda11.2_nvcc_py3.9 --config=rbe_linux_cuda11.2_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_python3.9"
+build:rbe_linux_cuda11.2_nvcc_base --config=rbe_cpu_linux_base
+build:rbe_linux_cuda11.2_nvcc_base --repo_env=TF_CUDA_CONFIG_REPO="@sigbuild-r2.14-clang_config_cuda"
+build:rbe_linux_cuda11.2_nvcc_base --repo_env=TF_TENSORRT_CONFIG_REPO="@sigbuild-r2.14-clang_config_tensorrt"
+build:rbe_linux_cuda11.2_nvcc_base --repo_env=TF_NCCL_CONFIG_REPO="@sigbuild-r2.14-clang_config_nccl"
 
 # Map default to CUDA 11.2.
-build:rbe_linux_cuda_nvcc_py37 --config=rbe_linux_cuda11.2_nvcc_py3.7
-build:rbe_linux_cuda_nvcc_py39 --config=rbe_linux_cuda11.2_nvcc_py3.9
+build:rbe_linux_cuda_nvcc_py39 --config=rbe_linux_cuda11.2_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@sigbuild-r2.14-clang_config_python"
 
 # ROCm
+# TODO(kanglan): Remove rocm configs. Cannot use sigbuild clang toolchain since
+# sigbuild_tf_configs do not support ROCm.
 build:rbe_linux_rocm_base --config=rocm
 build:rbe_linux_rocm_base --config=rbe_linux
 build:rbe_linux_rocm_base --crosstool_top="@ubuntu20.04-gcc9_manylinux2014-rocm_config_rocm//crosstool:toolchain"
@@ -493,8 +487,8 @@ build:rbe_linux_rocm_py3.9 --config=rbe_linux_rocm_base --repo_env=TF_PYTHON_CON
 # Linux CPU
 build:rbe_linux_py3 --config=rbe_linux
 build:rbe_linux_py3 --config=rbe_linux_py3_base
-build:rbe_linux_py3_base --python_path="/usr/local/bin/python3.9"
-build:rbe_linux_py3_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_python3.9"
+build:rbe_linux_py3_base --python_path="/usr/bin/python3"
+build:rbe_linux_py3_base --repo_env=TF_PYTHON_CONFIG_REPO="@sigbuild-r2.14-clang_config_python"
 
 # TODO(kanglan): Remove rbe_win and rbe_win_py3* after b/289091160 is fixed
 build:rbe_win --config=rbe
