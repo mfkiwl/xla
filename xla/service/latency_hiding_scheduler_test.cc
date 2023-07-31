@@ -2707,9 +2707,9 @@ TEST_F(LatencyHidingSchedulerTest, AddDeleteOccupierForSharedResource) {
   CHECK(check_eq({4, 6, 7}));
 
   occupiers.clear();
-  edge1.SetLatency(1);
-  edge2.SetLatency(2);
-  edge3.SetLatency(3);
+  edge1.SetOriginalLatency(1);
+  edge2.SetOriginalLatency(2);
+  edge3.SetOriginalLatency(3);
 
   DefaultSchedulerCore::AddOccupierToResource(0, edge1, occupiers);
   CHECK(check_eq({1}));
@@ -2770,15 +2770,15 @@ TEST_F(LatencyHidingSchedulerTest, AddDeleteOccupierForSharedResource) {
   auto res = DefaultSchedulerCore::AddOccupierToResource(1, edge0, occupiers);
   CHECK(!res);
 
-  edge0.SetLatency(0.5);
+  edge0.SetOriginalLatency(0.5);
   DefaultSchedulerCore::AddOccupierToResource(2, edge0, occupiers);
   CHECK(check_eq({1, 3.5, 4.5, 6.5}));
 
   //========================== Additions & Deletions ===========================
   occupiers.clear();
-  edge1.SetLatency(1);
-  edge2.SetLatency(2);
-  edge3.SetLatency(3);
+  edge1.SetOriginalLatency(1);
+  edge2.SetOriginalLatency(2);
+  edge3.SetOriginalLatency(3);
 
   DefaultSchedulerCore::AddOccupierToResource(0, edge1, occupiers);
   DefaultSchedulerCore::AddOccupierToResource(0, edge2, occupiers);
