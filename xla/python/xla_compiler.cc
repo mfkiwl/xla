@@ -918,7 +918,12 @@ void BuildXlaCompilerSubmodule(py::module& m) {
           [](ExecutableBuildOptions& options, std::vector<bool> values) {
             absl::InlinedVector<bool, 1> v(values.begin(), values.end());
             options.set_allow_spmd_sharding_propagation_to_output(v);
-          });
+          })
+      .def_property("assume_identical_modules_in_multicontroller_mode",
+                    &ExecutableBuildOptions::
+                        assume_identical_modules_in_multicontroller_mode,
+                    &ExecutableBuildOptions::
+                        set_assume_identical_modules_in_multicontroller_mode);
 
   py::enum_<OpSharding::Type> op_sharding_type(m, "OpSharding_Type");
   op_sharding_type.value("REPLICATED", OpSharding::REPLICATED)

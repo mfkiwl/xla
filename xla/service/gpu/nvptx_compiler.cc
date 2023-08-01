@@ -245,10 +245,13 @@ Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
   return OkStatus();
 }
 
-bool NVPTXCompiler::EnableCollectiveScheduleLinearizerForSpmd(
+// Linearize collective schedule under identical initial modules in MC mode if
+// online autotuning of convolutions is enabled.
+bool NVPTXCompiler::EnableCollectiveScheduleLinearizerForIdenticalModulesInMC(
     HloModule* hlo_module, se::StreamExecutor* stream_exec) {
-  return hlo_module->config().use_spmd_partitioning() &&
-         stream_exec != nullptr &&
+  return hlo_module->config()
+             .assume_identical_modules_in_multicontroller_mode() &&
+         /* online autotuning is enabled */ stream_exec != nullptr &&
          GpuConvAlgorithmPicker::IsEnabled(hlo_module);
 }
 

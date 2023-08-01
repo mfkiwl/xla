@@ -43,7 +43,7 @@ class AMDGPUCompiler : public GpuCompiler {
       const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
       const AutotuneResults* autotune_results) override;
 
-  bool EnableCollectiveScheduleLinearizerForSpmd(
+  bool EnableCollectiveScheduleLinearizerForIdenticalModulesInMC(
       HloModule* hlo_module, se::StreamExecutor* stream_exec) override;
 
   bool RequiresCollectiveScheduleLinearizer(const HloModule* module) override;

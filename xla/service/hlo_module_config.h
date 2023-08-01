@@ -367,6 +367,15 @@ class HloModuleConfig {
     device_memory_size_ = device_memory_size;
   }
 
+  bool assume_identical_modules_in_multicontroller_mode() const {
+    return assume_identical_modules_in_multicontroller_mode_;
+  }
+  void set_assume_identical_modules_in_multicontroller_mode(
+      bool assume_identical_modules_in_multicontroller_mode) {
+    assume_identical_modules_in_multicontroller_mode_ =
+        assume_identical_modules_in_multicontroller_mode;
+  }
+
  private:
   // If you add new members, be sure to update compilation_cache_key and the
   // HloModuleConfigProto.
@@ -481,6 +490,14 @@ class HloModuleConfig {
   std::string fdo_profile_;
 
   int64_t device_memory_size_ = 0;
+
+  // Assume that if multiple independently compiled modules communicate using
+  // collective communication ops, the modules being compiled are identical. If
+  // compiler determinism can be guaranteed, then in this case the collectives
+  // will be scheduled in the same order across these independent compilations
+  // and XLA does not have to do anything additional to make sure collectives
+  // across these independently compiled modules line up in a consistent order.
+  bool assume_identical_modules_in_multicontroller_mode_ = true;
   // LINT.ThenChange(//tensorflow/compiler/xla/xla.proto)
 };
 

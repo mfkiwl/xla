@@ -268,6 +268,7 @@ StatusOr<CompileOptions> FunctionalHloRunner::CreateCompileOptions(
   build_options.set_num_partitions(replicas_and_partitions.partitions);
   if (raw_options.spmd_mode == SpmdMode::kUseSpmdPartitioning) {
     build_options.set_use_spmd_partitioning(true);
+    build_options.set_assume_identical_modules_in_multicontroller_mode(true);
   }
   if (!build_options.has_device_assignment() &&
       !raw_options.num_slices.has_value()) {
@@ -360,6 +361,8 @@ FunctionalHloRunner::CreateExecutableBuildOptionsFromExecutionOptions(
   build_options.set_num_partitions(execution_options.num_partitions());
   build_options.set_use_spmd_partitioning(
       execution_options.use_spmd_partitioning());
+  build_options.set_assume_identical_modules_in_multicontroller_mode(
+      execution_options.assume_identical_modules_in_multicontroller_mode());
   build_options.set_use_auto_spmd_partitioning(
       execution_options.use_auto_spmd_partitioning());
   build_options.set_deduplicate_hlo(execution_options.deduplicate_hlo());

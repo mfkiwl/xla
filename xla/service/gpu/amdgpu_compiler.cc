@@ -129,10 +129,11 @@ Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
   return OkStatus();
 }
 
-bool AMDGPUCompiler::EnableCollectiveScheduleLinearizerForSpmd(
+bool AMDGPUCompiler::EnableCollectiveScheduleLinearizerForIdenticalModulesInMC(
     HloModule* hlo_module, se::StreamExecutor* stream_exec) {
-  return hlo_module->config().use_spmd_partitioning() &&
-         stream_exec != nullptr &&
+  return hlo_module->config()
+             .assume_identical_modules_in_multicontroller_mode() &&
+         /* online autotuning is enabled */ stream_exec != nullptr &&
          GpuConvAlgorithmPicker::IsEnabled(hlo_module);
 }
 

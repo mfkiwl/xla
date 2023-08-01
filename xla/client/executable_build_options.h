@@ -209,6 +209,16 @@ class ExecutableBuildOptions {
     return *this;
   }
 
+  bool assume_identical_modules_in_multicontroller_mode() const {
+    return assume_identical_modules_in_multicontroller_mode_;
+  }
+  ExecutableBuildOptions& set_assume_identical_modules_in_multicontroller_mode(
+      bool assume_identical_modules_in_multicontroller_mode) {
+    assume_identical_modules_in_multicontroller_mode_ =
+        assume_identical_modules_in_multicontroller_mode;
+    return *this;
+  }
+
   // Returns a string representation of the build options, suitable for
   // debugging.
   std::string ToString() const;
@@ -239,6 +249,7 @@ class ExecutableBuildOptions {
   LayoutCanonicalizationCallback layout_canonicalization_callback_;
   std::string fdo_profile_;
   int64_t device_memory_size_ = 0;
+  bool assume_identical_modules_in_multicontroller_mode_ = true;
 };
 
 StatusOr<ExecutableBuildOptions> ExecutableBuildOptionsFromProto(

@@ -833,7 +833,8 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
       pipeline.AddPass<GpuAsyncCollectiveAnnotator>(convert_to_async);
     }
 
-    if (!hlo_module->config().use_spmd_partitioning()) {
+    if (!hlo_module->config()
+             .assume_identical_modules_in_multicontroller_mode()) {
       pipeline.AddPass<CollectivesScheduleLinearizer>();
     }
 
@@ -981,9 +982,10 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                      .VerifyReshapeIsBitcast(),
                  /*debug_only=*/true);
 
-  // Linearize collective schedule under SPMD partitioning if online autotuning
-  // of convolutions is enabled.
-  if (EnableCollectiveScheduleLinearizerForSpmd(hlo_module, stream_exec)) {
+  // Linearize collective schedule for identical modules in MC mode if online
+  // autotuning of convolutions is enabled.
+  if (EnableCollectiveScheduleLinearizerForIdenticalModulesInMC(hlo_module,
+                                                                stream_exec)) {
     pipeline.AddPass<CollectivesScheduleLinearizer>(
         [this](const HloModule* module) {
           return RequiresCollectiveScheduleLinearizer(module);

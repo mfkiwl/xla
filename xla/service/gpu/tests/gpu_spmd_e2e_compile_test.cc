@@ -97,6 +97,7 @@ ENTRY main {
 
   HloModuleConfig config;
   config.set_use_spmd_partitioning(true);
+  config.set_assume_identical_modules_in_multicontroller_mode(true);
   config.set_num_partitions(4);
   config.set_debug_options(GetDebugOptionsFromFlags());
   auto hlo_module = ParseAndReturnVerifiedModule(hlo_string, config).value();

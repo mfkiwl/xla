@@ -277,6 +277,7 @@ class ExecutableBuildOptions:
   use_auto_spmd_partitioning: bool
   auto_spmd_partitioning_mesh_shape: List[int]
   auto_spmd_partitioning_mesh_ids: List[int]
+  assume_identical_modules_in_multicontroller_mode: bool
 
 class PrecisionConfig_Precision(enum.IntEnum):
   DEFAULT: int

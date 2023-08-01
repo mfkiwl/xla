@@ -170,6 +170,8 @@ StatusOr<ExecutableBuildOptionsProto> ExecutableBuildOptions::ToProto() const {
   }
   *output.mutable_fdo_profile() = fdo_profile();
   output.set_device_memory_size(device_memory_size());
+  output.set_assume_identical_modules_in_multicontroller_mode(
+      assume_identical_modules_in_multicontroller_mode());
   return output;
 }
 
@@ -208,6 +210,8 @@ StatusOr<ExecutableBuildOptions> ExecutableBuildOptionsFromProto(
       input.allow_spmd_sharding_propagation_to_output());
   *output.mutable_fdo_profile() = input.fdo_profile();
   output.set_device_memory_size(input.device_memory_size());
+  output.set_assume_identical_modules_in_multicontroller_mode(
+      input.assume_identical_modules_in_multicontroller_mode());
   return output;
 }
 
@@ -257,6 +261,8 @@ ExecutionOptions CreateExecutionOptions(
   execution_options.set_fdo_profile(build_options.fdo_profile().data(),
                                     build_options.fdo_profile().size());
   execution_options.set_device_memory_size(build_options.device_memory_size());
+  execution_options.set_assume_identical_modules_in_multicontroller_mode(
+      build_options.assume_identical_modules_in_multicontroller_mode());
   return execution_options;
 }
 
