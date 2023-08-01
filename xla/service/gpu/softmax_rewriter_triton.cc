@@ -126,6 +126,11 @@ bool IsTriviallyFusible(HloInstruction* instr, const GpuVersion& gpu_version,
     return false;
   }
 
+  if (instr->IsElementwiseBinary() &&
+      instr->mutable_operand(0) == instr->mutable_operand(1)) {
+    return true;
+  }
+
   if (instr->opcode() == HloOpcode::kBitcast &&
       BitcastIsTilingNoop(instr, gpu_version)) {
     return true;

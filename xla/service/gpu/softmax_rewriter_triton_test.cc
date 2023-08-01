@@ -899,6 +899,32 @@ ENTRY main {
               GmockMatch(m::Convert(m::Fusion(m::Parameter()))));
 }
 
+TEST_F(SoftmaxRewriterTritonTest, CanFuseFirstLayerNormDiamondF16) {
+  const std::string hlo_string = R"(
+HloModule softmax
+max_computation {
+  arg_0 = f16[] parameter(0)
+  arg_1 = f16[] parameter(1)
+  ROOT maximum = f16[] maximum(arg_0, arg_1)
+}
+ENTRY main {
+  param_0 = f16[127,125]{1,0} parameter(0)
+  multiply =  f16[127,125]{1,0} multiply(param_0, param_0)
+  constant_neg_inf = f16[] constant(-inf)
+  reduce = f16[127]{0} reduce(multiply, constant_neg_inf), dimensions={1}, to_apply=max_computation
+  broadcast = f16[127,125]{1,0} broadcast(reduce), dimensions={0}
+  ROOT subtract = f16[127,125]{1,0} subtract(param_0, broadcast)
+}
+)";
+  auto module = ParseAndReturnVerifiedModule(hlo_string).value();
+  SoftmaxRewriterTriton fusion_rewriter(gpu_version_);
+  EXPECT_TRUE(fusion_rewriter.Run(module.get()).value());
+  EXPECT_TRUE(verifier().Run(module.get()).status().ok());
+  VLOG(2) << module->ToString();
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Fusion(m::Parameter())));
+}
+
 }  // anonymous namespace
 }  // namespace gpu
 }  // namespace xla
