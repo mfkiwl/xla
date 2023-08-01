@@ -3572,5 +3572,56 @@ ENTRY main {
   EXPECT_EQ(fusion->operand(1)->opcode(), HloOpcode::kGetTupleElement);
 }
 
+TEST_F(CopyInsertionTest, RegionAnalysisNoCopyOfAddOutputInsideWhileBody) {
+  const char* const kModuleString = R"(
+HloModule while_aliasing, input_output_alias={ {0}: (0, {}, may-alias), {1}: (1, {}, may-alias), {2}: (2, {}, may-alias) }
+
+add {
+  param_0 = f32[1,128] parameter(0)
+  param_1 = f32[1,128] parameter(1)
+  ROOT add = f32[1,128] add(param_0, param_1)
+}
+
+condition {
+  input_tuple = (f32[1,128], f32[1,128], pred[]) parameter(0)
+  ROOT cond = pred[] get-tuple-element(input_tuple), index=2
+}
+
+body {
+  input_tuple = (f32[1,128], f32[1,128], pred[]) parameter(0)
+  param_0 = f32[1,128] get-tuple-element(input_tuple), index=0
+  param_1 = f32[1,128] get-tuple-element(input_tuple), index=1
+  cond = pred[] get-tuple-element(input_tuple), index=2
+  c0 = f32[] constant(0)
+  add = f32[1,128] add(c0, param_1)
+  splat_c0 = f32[1,128] broadcast(c0), dimensions={}
+  add_1 = f32[1,128] add(splat_c0, splat_c0)
+  ROOT output_tuple = (f32[1,128], f32[1,128], pred[]) tuple(add, add_1, cond)
+}
+
+ENTRY main {
+  param_0 = f32[1,128] parameter(0)
+  param_1 = f32[1,128] parameter(1)
+  param_2 = pred[] parameter(2)
+  tuple = (f32[1,128], f32[1,128], pred[]) tuple(param_0, param_1, param_2)
+  ROOT while = (f32[1,128], f32[1,128], pred[]) while(tuple), condition=condition, body=body
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnUnverifiedModule(kModuleString));
+
+  CopyInsertion copy_insertion(nullptr,
+                               /*use_region_based_live_range_analysis=*/-1);
+  ASSERT_IS_OK(copy_insertion.Run(module.get()).status());
+  VLOG(3) << module->ToString();
+
+  auto root = FindInstruction(module.get(), "tuple.3");
+  EXPECT_NE(root, nullptr);
+  EXPECT_NE(root->operand(0)->opcode(), HloOpcode::kCopy);
+  EXPECT_NE(root->operand(1)->opcode(), HloOpcode::kCopy);
+  EXPECT_NE(root->operand(2)->opcode(), HloOpcode::kCopy);
+}
+
 }  // namespace
 }  // namespace xla
