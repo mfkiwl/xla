@@ -228,21 +228,15 @@ StatusOr<HloSharding> IotaTileHelper(
         "`dims`(%lld).",
         subgroup_types.size(), dims.size());
   }
-  auto make_assignment = [&] {
-    if (reshape_dims.empty() && transpose_perm.empty()) {
-      Array<int64_t> assignment(dims);
-      assignment.FillIota(0);
-      return assignment;
-    }
-    Array<int64_t> assignment(reshape_dims);
-    assignment.FillIota(0);
-    assignment.TransposeDimensions(transpose_perm);
-    assignment.Reshape(dims);
-    return assignment;
-  };
   return subgroup_types.empty()
-             ? HloSharding::Tile(make_assignment())
-             : HloSharding::Subgroup(make_assignment(), subgroup_types);
+             ? (reshape_dims.empty()
+                    ? HloSharding::IotaTile(dims)
+                    : HloSharding::IotaTile(dims, reshape_dims, transpose_perm))
+             : HloSharding::Subgroup(
+                   (reshape_dims.empty()
+                        ? TileAssignment(dims)
+                        : TileAssignment(dims, reshape_dims, transpose_perm)),
+                   subgroup_types);
 }
 
 // Registers a 'fn_capsule' as a CPU custom call target.
