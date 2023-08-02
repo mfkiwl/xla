@@ -2494,6 +2494,7 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
+        "//xla/service:collective_permute_decomposer",
     ]),
 )
 
