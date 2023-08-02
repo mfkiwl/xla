@@ -28,9 +28,11 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
+#include "absl/types/span.h"
 #include "xla/client/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
@@ -60,6 +62,15 @@ static PJRT_Device* GetCDevice(const PJRT_Client* client,
   auto c_device_map = client->c_device_from_cpp_device;
   auto iter = c_device_map.find(device);
   CHECK(iter != c_device_map.end());
+  return iter->second;
+}
+
+// Returns C memory from wrapped C++ memory.
+static PJRT_Memory* GetCMemory(const PJRT_Client* client,
+                               const xla::PjRtMemorySpace* memory) {
+  auto c_memory_map = client->c_memory_from_cpp_memory;
+  auto iter = c_memory_map.find(memory);
+  CHECK(iter != c_memory_map.end());
   return iter->second;
 }
 
@@ -727,6 +738,16 @@ PJRT_Error* PJRT_Memory_ToString(PJRT_Memory_ToString_Args* args) {
 
   args->to_string = args->memory->memory_space->ToString().data();
   args->to_string_size = args->memory->memory_space->ToString().size();
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Memory_AttachedDevices(
+    PJRT_Memory_AttachedDevices_Args* args) {
+  PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
+      "PJRT_Memory_AttachedDevices_Args",
+      PJRT_Memory_AttachedDevices_Args_STRUCT_SIZE, args->struct_size));
+  args->attached_devices = args->memory->attached_devices.data();
+  args->num_attached_devices = args->memory->attached_devices.size();
   return nullptr;
 }
 
@@ -1775,13 +1796,37 @@ static void PopulatePjrtDeviceDescriptionAttributes(
   }
 }
 
-static void PopulatePjrtDeviceMemories(const xla::PjRtDevice& cpp_device,
-                                       PJRT_Device* c_device) {
-  c_device->owned_memories.reserve(cpp_device.memory_spaces().size());
-  c_device->memories.reserve(cpp_device.memory_spaces().size());
-  for (xla::PjRtMemorySpace* memory_space : cpp_device.memory_spaces()) {
-    c_device->owned_memories.push_back(PJRT_Memory{memory_space});
-    c_device->memories.push_back(&c_device->owned_memories.back());
+static void PopulatePjrtClientMemories(PJRT_Client* c_client) {
+  absl::Span<xla::PjRtMemorySpace* const> memory_spaces =
+      c_client->client->memory_spaces();
+
+  c_client->owned_memories.reserve(memory_spaces.size());
+  c_client->memories.reserve(memory_spaces.size());
+  for (xla::PjRtMemorySpace* memory_space : memory_spaces) {
+    c_client->owned_memories.push_back(PJRT_Memory{memory_space});
+    c_client->memories.push_back(&c_client->owned_memories.back());
+    c_client->c_memory_from_cpp_memory[memory_space] =
+        &c_client->owned_memories.back();
+  }
+}
+
+static void ConnectMemoriesAndDevices(PJRT_Client* c_client) {
+  for (PJRT_Device* c_device : c_client->devices) {
+    absl::Span<xla::PjRtMemorySpace* const> cpp_memories =
+        c_device->device->memory_spaces();
+    c_device->memories.reserve(cpp_memories.size());
+    for (xla::PjRtMemorySpace* memory_space : cpp_memories) {
+      c_device->memories.push_back(GetCMemory(c_client, memory_space));
+    }
+  }
+
+  for (PJRT_Memory* c_memory : c_client->memories) {
+    absl::Span<xla::PjRtDevice* const> cpp_devices =
+        c_memory->memory_space->devices();
+    c_memory->attached_devices.reserve(cpp_devices.size());
+    for (xla::PjRtDevice* cpp_device : cpp_devices) {
+      c_memory->attached_devices.push_back(GetCDevice(c_client, cpp_device));
+    }
   }
 }
 
@@ -1800,7 +1845,6 @@ PJRT_Client* CreateWrapperClient(std::unique_ptr<xla::PjRtClient> cpp_client) {
         PJRT_Device{device, {&device->description()}});
     PJRT_Device* c_device = &c_client->owned_devices.back();
     PopulatePjrtDeviceDescriptionAttributes(&c_device->description);
-    PopulatePjrtDeviceMemories(*device, c_device);
     c_client->devices.push_back(c_device);
     if (device->IsAddressable()) {
       c_client->addressable_devices.push_back(c_device);
@@ -1809,6 +1853,9 @@ PJRT_Client* CreateWrapperClient(std::unique_ptr<xla::PjRtClient> cpp_client) {
   }
   CHECK_EQ(c_client->addressable_devices.size(),
            c_client->client->addressable_device_count());
+
+  PopulatePjrtClientMemories(c_client);
+  ConnectMemoriesAndDevices(c_client);
   return c_client;
 }
 
