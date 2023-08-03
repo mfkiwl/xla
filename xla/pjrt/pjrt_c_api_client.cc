@@ -771,6 +771,34 @@ PjRtCApiExecutable::GetCostAnalysis() const {
                                              args.num_properties);
 }
 
+StatusOr<std::vector<std::vector<absl::string_view>>>
+PjRtCApiExecutable::GetOutputMemoryKinds() const {
+  PJRT_Executable_GetOutputMemoryKinds_Args args;
+  args.struct_size = PJRT_Executable_GetOutputMemoryKinds_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.executable = c_executable();
+
+  const PJRT_Api* c_api = pjrt_c_api();
+  RETURN_STATUS_IF_PJRT_ERROR(
+      c_api->PJRT_Executable_GetOutputMemoryKinds(&args), c_api);
+
+  std::vector<std::vector<absl::string_view>> out;
+  out.reserve(args.num_programs);
+  int total_index = 0;
+  for (int i = 0; i < args.num_programs; ++i) {
+    std::vector<absl::string_view> memories;
+    memories.reserve(args.num_outputs[i]);
+    for (int j = 0; j < args.num_outputs[i]; ++j) {
+      memories.push_back(
+          absl::string_view(args.output_memory_ptrs[total_index],
+                            args.output_memory_sizes[total_index]));
+      ++total_index;
+    }
+    out.push_back(memories);
+  }
+  return out;
+}
+
 StatusOr<std::vector<std::shared_ptr<HloModule>>>
 PjRtCApiExecutable::GetHloModules() const {
   auto* c_api = pjrt_c_api();

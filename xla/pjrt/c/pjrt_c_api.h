@@ -53,7 +53,7 @@ extern "C" {
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 17
+#define PJRT_API_MINOR 18
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -1262,6 +1262,27 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Executable_GetCostAnalysis_Args, properties);
 typedef PJRT_Error* PJRT_Executable_GetCostAnalysis(
     PJRT_Executable_GetCostAnalysis_Args* args);
 
+struct PJRT_Executable_GetOutputMemoryKinds_Args {
+  size_t struct_size;
+  void* priv;
+  PJRT_Executable* executable;
+  size_t num_programs;
+  // Represents the list of `num_output`, its length is `num_programs`.
+  const size_t* num_outputs;
+  // Output of size `[num_programs, num_output]` which can be represented as a
+  // list of lists, where the size of the outer list equals to `num_programs`,
+  // which is just one under SPMD, and `num_output` is the number of output
+  // returned by each program.
+  const char** output_memory_ptrs;    // out
+  const size_t* output_memory_sizes;  // out
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Executable_GetOutputMemoryKinds_Args,
+                          output_memory_sizes);
+
+// Returns a list of lists of memory kind strings for output.
+typedef PJRT_Error* PJRT_Executable_GetOutputMemoryKinds(
+    PJRT_Executable_GetOutputMemoryKinds_Args* args);
+
 typedef struct PJRT_SerializedExecutable PJRT_SerializedExecutable;
 
 struct PJRT_Executable_Serialize_Args {
@@ -1862,6 +1883,7 @@ typedef struct {
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_NumOutputs);
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_SizeOfGeneratedCodeInBytes);
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_GetCostAnalysis);
+  _PJRT_API_STRUCT_FIELD(PJRT_Executable_GetOutputMemoryKinds);
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_OptimizedProgram);
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_Serialize);
 

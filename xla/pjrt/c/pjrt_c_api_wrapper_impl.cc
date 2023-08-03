@@ -123,6 +123,39 @@ static xla::Status PopulateExecutableCostAnalysisIfNeeded(
   return xla::OkStatus();
 }
 
+static xla::Status PopulateExecutableOutputMemoryKindsIfNeeded(
+    PJRT_Executable* executable) {
+  absl::MutexLock lock(&executable->output_memory_mutex);
+  if (!executable->get_output_memory_ran) {
+    TF_ASSIGN_OR_RETURN(auto output_memories,
+                        executable->get()->GetOutputMemoryKinds());
+
+    std::vector<size_t>& num_outputs = executable->num_outputs;
+    std::vector<const char*>& output_memory_ptrs =
+        executable->output_memory_ptrs;
+    std::vector<size_t>& output_memory_sizes = executable->output_memory_sizes;
+
+    size_t total_size = 0;
+    num_outputs.reserve(output_memories.size());
+    for (const auto& inner_output_memories : output_memories) {
+      auto num_output = inner_output_memories.size();
+      total_size += num_output;
+      num_outputs.push_back(num_output);
+    }
+    output_memory_ptrs.reserve(total_size);
+    output_memory_sizes.reserve(total_size);
+
+    for (const auto& inner_output_memories : output_memories) {
+      for (absl::string_view memory_string : inner_output_memories) {
+        output_memory_ptrs.push_back(memory_string.data());
+        output_memory_sizes.push_back(memory_string.size());
+      }
+    }
+    executable->get_output_memory_ran = true;
+  }
+  return xla::OkStatus();
+}
+
 xla::PjRtClient::KeyValueGetCallback ToCppKeyValueGetCallback(
     PJRT_KeyValueGetCallback c_callback, void* user_arg) {
   if (c_callback == nullptr) {
@@ -928,6 +961,21 @@ PJRT_Error* PJRT_Executable_GetCostAnalysis(
   } else {
     args->properties = nullptr;
   }
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Executable_GetOutputMemoryKinds(
+    PJRT_Executable_GetOutputMemoryKinds_Args* args) {
+  PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
+      "PJRT_Executable_GetOutputMemoryKinds_Args",
+      PJRT_Executable_GetOutputMemoryKinds_Args_STRUCT_SIZE,
+      args->struct_size));
+  PJRT_RETURN_IF_ERROR(
+      PopulateExecutableOutputMemoryKindsIfNeeded(args->executable));
+  args->num_programs = args->executable->num_outputs.size();
+  args->num_outputs = args->executable->num_outputs.data();
+  args->output_memory_ptrs = args->executable->output_memory_ptrs.data();
+  args->output_memory_sizes = args->executable->output_memory_sizes.data();
   return nullptr;
 }
 
