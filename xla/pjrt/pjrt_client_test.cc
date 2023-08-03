@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/synchronization/blocking_counter.h"
 #include "xla/client/xla_builder.h"
+#include "xla/service/hlo_parser.h"
 #include "xla/test.h"
 #include "xla/tests/literal_test_util.h"
 
@@ -472,6 +473,83 @@ TEST(PjRtClientTest, CopyToDeviceAsyncExternalCpuOnly) {
     std::vector<int32_t> expected(4, 0);
     EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
                                        *literal));
+  }
+}
+
+StatusOr<std::unique_ptr<PjRtBuffer>> MakeFloatBuffer(
+    PjRtClient* client, const std::vector<float>& data,
+    absl::Span<const int64_t> dimensions) {
+  Shape shape = ShapeUtil::MakeShape(F32, {2, 2});
+  return client->BufferFromHostBuffer(
+      data.data(), shape.element_type(), shape.dimensions(),
+      /*byte_strides=*/std::nullopt,
+      PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+      client->addressable_devices()[0]);
+}
+
+TEST(PjRtClientTest, DuplicateDonationError) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());
+  constexpr char kProgram[] =
+      R"(HloModule DuplicateDonationError, input_output_alias={ {0}: (1, {}, must-alias), {1}: (2, {}, must-alias) }
+ENTRY DuplicateDonationError() -> (f32[2, 2], f32[2, 2]) {
+    %input0 = f32[2, 2] parameter(0)
+    %input1 = f32[2, 2] parameter(1)
+    %input2 = f32[2, 2] parameter(2)
+    %input3 = f32[2, 2] parameter(3)
+    %tmp1 = f32[2, 2] add(%input0, %input1)
+    %tmp2 = f32[2, 2] add(%input2, %input3)
+    ROOT %result = (f32[2, 2], f32[2, 2]) tuple(%tmp1, %tmp2)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
+                          ParseAndReturnUnverifiedModule(kProgram, {}));
+  XlaComputation xla_computation(hlo_module->ToProto());
+  TF_ASSERT_OK_AND_ASSIGN(auto pjrt_executable,
+                          client->Compile(xla_computation, {}));
+
+  std::vector<float> data(4, 0);
+  TF_ASSERT_OK_AND_ASSIGN(auto buffer0,
+                          MakeFloatBuffer(client.get(), data, {2, 2}));
+  TF_ASSERT_OK_AND_ASSIGN(auto buffer1,
+                          MakeFloatBuffer(client.get(), data, {2, 2}));
+  TF_ASSERT_OK_AND_ASSIGN(auto buffer2,
+                          MakeFloatBuffer(client.get(), data, {2, 2}));
+
+  {
+    auto result = pjrt_executable->Execute(/*argument_handles=*/{{
+                                               buffer0.get(),
+                                               buffer1.get(),
+                                               buffer1.get(),
+                                               buffer0.get(),
+                                           }},
+                                           /*options=*/{});
+    ASSERT_FALSE(result.ok());
+    EXPECT_THAT(result.status().message(),
+                ::testing::HasSubstr("f(donate(a), donate(a))"));
+  }
+  {
+    auto result = pjrt_executable->Execute(/*argument_handles=*/{{
+                                               buffer1.get(),
+                                               buffer1.get(),
+                                               buffer2.get(),
+                                               buffer0.get(),
+                                           }},
+                                           /*options=*/{});
+    ASSERT_FALSE(result.ok());
+    EXPECT_THAT(result.status().message(),
+                ::testing::HasSubstr("f(a, donate(a))"));
+  }
+  {
+    auto result = pjrt_executable->Execute(/*argument_handles=*/{{
+                                               buffer0.get(),
+                                               buffer1.get(),
+                                               buffer2.get(),
+                                               buffer2.get(),
+                                           }},
+                                           /*options=*/{});
+    ASSERT_FALSE(result.ok());
+    EXPECT_THAT(result.status().message(),
+                ::testing::HasSubstr("f(donate(a), a)"));
   }
 }
 

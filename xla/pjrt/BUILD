@@ -199,6 +199,7 @@ cc_library(
         ":pjrt_client",
         "//xla:test",
         "//xla/client:xla_builder",
+        "//xla/service:hlo_parser",
         "//xla/tests:literal_test_util",
         "@com_google_absl//absl/synchronization",
     ],

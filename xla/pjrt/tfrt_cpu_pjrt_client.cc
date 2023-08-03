@@ -1177,6 +1177,7 @@ StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
 
   auto donate_it = parameters_that_must_be_donated_.begin();
 
+  absl::flat_hash_map<TfrtCpuBuffer*, std::pair<bool, int>> donation_clashes;
   for (int i = 0; i < argument_handles.size(); ++i) {
     PjRtBuffer* handle = argument_handles[i];
     auto* tfrt_buffer = tensorflow::down_cast<TfrtCpuBuffer*>(handle);
@@ -1192,6 +1193,30 @@ StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
     auto get_buffer = [&](int i) -> Status {
       bool must_donate = donate_it != parameters_that_must_be_donated_.end() &&
                          *donate_it == i;
+      auto [donation_clash_it, first_use] =
+          donation_clashes.emplace(tfrt_buffer, std::make_pair(must_donate, i));
+      if (!first_use && (must_donate || donation_clash_it->second.first)) {
+        if (must_donate && donation_clash_it->second.first) {
+          return InvalidArgument(
+              "Attempt to donate the same buffer twice in Execute() (second "
+              "use: flattened argument %d, replica %d, first use: %d). Toy "
+              "example for this bug: `f(donate(a), donate(a))`.",
+              i, replica, donation_clash_it->second.second);
+        } else if (must_donate) {
+          return InvalidArgument(
+              "Attempt to donate a buffer which is also used by the same call "
+              "to Execute() (second use: flattened argument %d, replica %d, "
+              "first use: %d). Toy example for this bug: `f(a, donate(a))`.",
+              i, replica, donation_clash_it->second.second);
+        } else {
+          return InvalidArgument(
+              "Attempt to use a buffer that was previously donated in the same "
+              "call to Execute() (second use: flattened argument %d, replica "
+              "%d, first_use: %d). Toy example for this bug: `f(donate(a), "
+              "a)`.",
+              i, replica, donation_clash_it->second.second);
+        }
+      }
       if (must_donate) {
         ++donate_it;
         StatusOr<TfrtCpuBuffer::DonationTransaction> donation_transaction =
