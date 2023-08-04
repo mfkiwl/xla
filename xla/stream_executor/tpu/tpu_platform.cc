@@ -23,7 +23,6 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_executor.h"
 #include "xla/stream_executor/tpu/tpu_platform_id.h"
-#include "tsl/c/tsl_status_internal.h"
 
 namespace tensorflow {
 namespace tpu {
@@ -169,10 +168,10 @@ tsl::Status TpuPlatform::TpusPerHost(int* tpus) {
     return tsl::OkStatus();
   }
 
-  TSL_Status status;
-  stream_executor::tpu::OpsApiFn()->TpuConfigurationApi_TpusPerHostFn(tpus,
-                                                                      &status);
-  return status.status;
+  StatusHelper status;
+  stream_executor::tpu::OpsApiFn()->TpuConfigurationApi_TpusPerHostFn(
+      tpus, status.c_status);
+  return status.status();
 }
 
 tsl::Status TpuPlatform::TpuMemoryLimit(int64_t* memory_limit) {
@@ -182,10 +181,10 @@ tsl::Status TpuPlatform::TpuMemoryLimit(int64_t* memory_limit) {
     return tsl::OkStatus();
   }
 
-  TSL_Status status;
+  StatusHelper status;
   stream_executor::tpu::OpsApiFn()->TpuConfigurationApi_TpuMemoryLimitFn(
-      reinterpret_cast<int64_t*>(memory_limit), &status);
-  return status.status;
+      reinterpret_cast<int64_t*>(memory_limit), status.c_status);
+  return status.status();
 }
 
 bool RegisterTpuPlatform() {
