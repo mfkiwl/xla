@@ -15,10 +15,15 @@ limitations under the License.
 
 #include "xla/python/sharding.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 
+#include "pybind11/cast.h"  // from @pybind11
+#include "pybind11/pytypes.h"  // from @pybind11
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/py_client.h"
 #include "xla/python/util.h"
 
 namespace jax {
@@ -190,7 +195,8 @@ void RegisterSharding(py::module& m) {
            py::arg("_parsed_pspec") = py::none())
       .def_property_readonly("mesh", &NamedSharding::mesh)
       .def_property_readonly("spec", &NamedSharding::spec)
-      .def_property_readonly("memory_kind", &NamedSharding::memory_kind)
+      .def_property("memory_kind", &NamedSharding::memory_kind,
+                    &NamedSharding::set_memory_kind)
       .def_property("_parsed_pspec", &NamedSharding::parsed_pspec,
                     &NamedSharding::set_parsed_pspec);
 
@@ -199,8 +205,8 @@ void RegisterSharding(py::module& m) {
       .def(py::init<py::object, py::object>(), py::arg("device"), py::kw_only(),
            py::arg("memory_kind") = py::none())
       .def_property_readonly("_device", &SingleDeviceSharding::device)
-      .def_property_readonly("_memory_kind",
-                             &SingleDeviceSharding::memory_kind);
+      .def_property("_memory_kind", &SingleDeviceSharding::memory_kind,
+                    &SingleDeviceSharding::set_memory_kind);
 
   py::class_<PmapSharding, XLACompatibleSharding>(m, "PmapSharding",
                                                   py::dynamic_attr())
@@ -225,7 +231,8 @@ void RegisterSharding(py::module& m) {
            py::arg("memory_kind") = py::none())
       .def_property_readonly("_devices", &GSPMDSharding::devices)
       .def_property_readonly("_hlo_sharding", &GSPMDSharding::hlo_sharding)
-      .def_property_readonly("_memory_kind", &GSPMDSharding::memory_kind);
+      .def_property("_memory_kind", &GSPMDSharding::memory_kind,
+                    &GSPMDSharding::set_memory_kind);
 }
 
 }  // namespace jax
